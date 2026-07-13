@@ -1,7 +1,11 @@
 import { describe, it, expect } from 'vitest';
 
 import { collectContext } from '../src/collect-context.mjs';
-import { buildDeterministicDiagnosis, classifyFailure } from '../src/deterministic-classifier.mjs';
+import {
+  buildDeterministicDiagnosis,
+  classifyFailure,
+  correlateProbableCause,
+} from '../src/deterministic-classifier.mjs';
 import { SCENARIOS, simulateFailure, simulateSuccess } from '../src/simulate-failure.mjs';
 
 /** Classifica um cenário do jeito que o agente classifica: sobre o log já mascarado de quem falhou. */
@@ -126,5 +130,137 @@ describe('buildDeterministicDiagnosis', () => {
     expect(diagnosis.probableCause).toMatch(/teste/i);
     expect(diagnosis.nextSteps.length).toBeGreaterThan(0);
     expect(diagnosis.limitations[0]).toMatch(/determinístico/i);
+  });
+});
+
+describe('classifyFailure: sinal específico, não genérico', () => {
+  it('prioriza AssertionError sobre o cabeçalho FAIL, mesmo quando FAIL aparece antes no log', () => {
+    const classification = classifyFailure({
+      sources: [
+        {
+          source: 'log:test',
+          content: [
+            ' FAIL  test/report.test.js > calcula o percentual',
+            '',
+            'AssertionError: expected 33 to be 50 // Object.is equality',
+            '',
+            '- Expected',
+            '+ Received',
+          ].join('\n'),
+        },
+      ],
+      hasFailedCommands: true,
+    });
+
+    expect(classification.failureType).toBe('test');
+    expect(classification.signal).toBe('test:AssertionError');
+    expect(classification.matches[0].excerpt).toMatch(/AssertionError/);
+  });
+
+  it('extrai as linhas expected/received como evidência quando não há AssertionError', () => {
+    const classification = classifyFailure({
+      sources: [
+        {
+          source: 'log:test',
+          content: [' FAIL  test/report.test.js', 'expected 33 to be 50', 'received value: 33'].join('\n'),
+        },
+      ],
+      hasFailedCommands: true,
+    });
+
+    expect(classification.failureType).toBe('test');
+    expect(classification.signal).toBe('test:expected');
+    expect(classification.matches.map((match) => match.excerpt)).toEqual(
+      expect.arrayContaining([expect.stringMatching(/expected/i), expect.stringMatching(/received/i)]),
+    );
+  });
+
+  it('usa FAIL apenas como fallback, quando nenhum padrão mais específico existe', () => {
+    const classification = classifyFailure({
+      sources: [{ source: 'log:test', content: ' FAIL  test/report.test.js > algum teste' }],
+      hasFailedCommands: true,
+    });
+
+    expect(classification.failureType).toBe('test');
+    expect(classification.signal).toBe('test:FAIL');
+  });
+
+  it('reconhece "Cannot find module" como dependência', () => {
+    const classification = classifyFailure({
+      sources: [{ source: 'log:build', content: "Error: Cannot find module 'zod'" }],
+      hasFailedCommands: true,
+    });
+
+    expect(classification.failureType).toBe('dependency');
+    expect(classification.signal).toBe('dependency:Cannot find module');
+  });
+});
+
+describe('correlateProbableCause', () => {
+  const DIFF_WITH_REGRESSION = [
+    'diff --git a/backend/src/services/report.js b/backend/src/services/report.js',
+    'index 3f21ab8..9c14de2 100644',
+    '--- a/backend/src/services/report.js',
+    '+++ b/backend/src/services/report.js',
+    '@@ -4,7 +4,7 @@',
+    ' export function duplicateCopies(quantity) {',
+    '-  return Math.max(quantity - 1, 0);',
+    '+  return quantity;',
+    ' }',
+  ].join('\n');
+
+  it('correlaciona causa específica quando o log de teste e o diff sustentam a mesma hipótese', () => {
+    const { classification } = classifyScenario('test');
+
+    const cause = correlateProbableCause({ classification, diffPatch: DIFF_WITH_REGRESSION });
+
+    expect(cause).toMatch(/primeira cópia/i);
+    expect(cause).toMatch(/duplicateCopies/);
+  });
+
+  it('não força a conclusão quando o diff não toca em duplicateCopies', () => {
+    const { classification } = classifyScenario('test');
+
+    const cause = correlateProbableCause({ classification, diffPatch: 'diff --git a/x.js b/x.js\n+ console.log(1)' });
+
+    expect(cause).toBeNull();
+  });
+
+  it('não força a conclusão quando não há evidência de teste (falha de outro tipo)', () => {
+    const { classification } = classifyScenario('lint');
+
+    const cause = correlateProbableCause({ classification, diffPatch: DIFF_WITH_REGRESSION });
+
+    expect(cause).toBeNull();
+  });
+
+  it('não força a conclusão quando o diff toca duplicateCopies mas não remove o desconto', () => {
+    const { classification } = classifyScenario('test');
+    const benignDiff = [
+      'diff --git a/backend/src/services/report.js b/backend/src/services/report.js',
+      '--- a/backend/src/services/report.js',
+      '+++ b/backend/src/services/report.js',
+      '@@ -1,3 +1,4 @@',
+      '+// comentário sobre duplicateCopies',
+      ' export function duplicateCopies(quantity) {',
+    ].join('\n');
+
+    const cause = correlateProbableCause({ classification, diffPatch: benignDiff });
+
+    expect(cause).toBeNull();
+  });
+
+  it('correlação se reflete no diagnóstico completo do fallback determinístico', () => {
+    const { context, classification } = classifyScenario('test');
+
+    const diagnosis = buildDeterministicDiagnosis({
+      classification,
+      evidence: [{ source: 'log:test', excerpt: 'AssertionError: expected 33 to be 50' }],
+      failedCommands: context.results.failedCommands,
+      limitations: context.limitations,
+      diffPatch: DIFF_WITH_REGRESSION,
+    });
+
+    expect(diagnosis.probableCause).toMatch(/primeira cópia/i);
   });
 });

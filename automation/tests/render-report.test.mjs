@@ -76,6 +76,32 @@ describe('renderMarkdown', () => {
   });
 });
 
+describe('renderMarkdown: saída limpa, sem ANSI', () => {
+  const ESC = String.fromCharCode(27);
+
+  it('remove códigos ANSI presentes em uma evidência antes de renderizar', async () => {
+    const { diagnosis, policy } = await diagnosisFor('test');
+    const poisoned = {
+      ...diagnosis,
+      evidence: [
+        { source: 'log:test', excerpt: `${ESC}[31m${ESC}[1mAssertionError${ESC}[22m: expected 33 to be 50${ESC}[0m` },
+      ],
+    };
+
+    const markdown = renderMarkdown(poisoned, { policyReasons: policy.reasons });
+
+    expect(markdown).not.toContain(ESC);
+    expect(markdown).toContain('AssertionError: expected 33 to be 50');
+  });
+
+  it('não contém sequências de escape ANSI mesmo para um cenário real', async () => {
+    const { diagnosis } = await diagnosisFor('test');
+    const markdown = renderMarkdown(diagnosis);
+
+    expect(markdown).not.toMatch(new RegExp(`${ESC}\\[`));
+  });
+});
+
 describe('renderPullRequestComment', () => {
   it('inclui o marcador usado no upsert', async () => {
     const { diagnosis } = await diagnosisFor('build');

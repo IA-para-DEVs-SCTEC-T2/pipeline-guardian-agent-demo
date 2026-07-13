@@ -61,6 +61,32 @@ describe('readCommandLogs', () => {
     expect(scan.log).toContain('[REDACTED]');
     expect(commands.find((command) => command.name === 'lint').status).toBe('skipped');
   });
+
+  it('remove códigos ANSI do log antes de recortar os trechos relevantes', () => {
+    const ESC = String.fromCharCode(27);
+    const coloredLog = `${ESC}[31mFAIL${ESC}[0m ${ESC}[1mtest/report.test.js${ESC}[22m\nAssertionError: expected 33 to be 50\n`;
+
+    const [command] = readCommandLogs({
+      commands: [{ name: 'test', command: 'npm run test', exitCode: 1, log: coloredLog }],
+    });
+
+    expect(command.log).not.toContain(ESC);
+    expect(command.log).toContain('FAIL test/report.test.js');
+    expect(command.log).toContain('AssertionError');
+  });
+
+  it('mascara segredo mesmo quando ele vem cercado de códigos ANSI', () => {
+    const ESC = String.fromCharCode(27);
+    const coloredSecretLog = `${ESC}[33mOPENAI_API_KEY=sk-${ESC}[0mabcdef1234567890\n`;
+
+    const [command] = readCommandLogs({
+      commands: [{ name: 'deploy', command: 'npm run deploy', exitCode: 1, log: coloredSecretLog }],
+    });
+
+    expect(command.log).not.toContain(ESC);
+    expect(command.log).not.toMatch(/sk-abcdef1234567890/);
+    expect(command.log).toContain('[REDACTED]');
+  });
 });
 
 describe('readPullRequestDiff', () => {
@@ -132,6 +158,30 @@ describe('buildEvidenceList', () => {
     });
 
     expect(evidence[0].excerpt).not.toContain('sk-abcdef');
+  });
+
+  it('não repete a mesma evidência quando a mesma linha aparece mais de uma vez na lista de matches', () => {
+    const evidence = buildEvidenceList({
+      matches: [
+        { source: 'log:test', line: 10, excerpt: 'AssertionError: expected 33 to be 50' },
+        { source: 'log:test', line: 10, excerpt: 'AssertionError: expected 33 to be 50' },
+        { source: 'log:test', line: 10, excerpt: 'AssertionError: expected 33 to be 50' },
+      ],
+    });
+
+    expect(evidence).toHaveLength(1);
+  });
+
+  it('limita a no máximo cinco evidências', () => {
+    const matches = Array.from({ length: 10 }, (_, index) => ({
+      source: 'log:test',
+      line: index + 1,
+      excerpt: `AssertionError: expected ${index} to be ${index + 1}`,
+    }));
+
+    const evidence = buildEvidenceList({ matches });
+
+    expect(evidence.length).toBeLessThanOrEqual(5);
   });
 });
 

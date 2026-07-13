@@ -6,6 +6,7 @@
  */
 
 import { redactSecrets } from './redact-secrets.mjs';
+import { sanitizeLog } from './sanitize-log.mjs';
 
 /** Marcador usado para localizar o comentário do agente na Pull Request. */
 export const REPORT_MARKER = '<!-- pipeline-guardian -->';
@@ -79,10 +80,11 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
     lines.push('_Nenhuma evidência coletada._');
   } else {
     for (const item of diagnosis.evidence) {
+      const cleanExcerpt = sanitizeLog(item.excerpt);
       lines.push(`- **${item.source}**`);
       lines.push('');
       lines.push('  ```text');
-      lines.push(`  ${item.excerpt.split('\n').join('\n  ')}`);
+      lines.push(`  ${cleanExcerpt.split('\n').join('\n  ')}`);
       lines.push('  ```');
     }
   }

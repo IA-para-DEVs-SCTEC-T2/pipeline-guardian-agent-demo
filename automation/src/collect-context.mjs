@@ -10,10 +10,11 @@
  */
 
 import { detectSecrets, redactSecrets } from './redact-secrets.mjs';
+import { sanitizeLog } from './sanitize-log.mjs';
 
 const MAX_LOG_LINES = 80;
 const MAX_DIFF_LINES = 200;
-const MAX_EVIDENCE_ITEMS = 8;
+const MAX_EVIDENCE_ITEMS = 5;
 const MAX_EXCERPT_LENGTH = 240;
 /** Linhas curtas demais (ex.: "- Expected") não sustentam nada: não são evidência. */
 const MIN_EXCERPT_LENGTH = 15;
@@ -69,7 +70,7 @@ export function readCommandLogs(source = {}) {
   const commands = Array.isArray(source.commands) ? source.commands : [];
 
   return commands.map((command) => {
-    const rawLog = typeof command.log === 'string' ? command.log : '';
+    const rawLog = sanitizeLog(typeof command.log === 'string' ? command.log : '');
     const { text, truncated } = selectRelevantLines(rawLog, MAX_LOG_LINES);
 
     return {
@@ -93,7 +94,7 @@ export function readCommandLogs(source = {}) {
  */
 export function readPullRequestDiff(source = {}) {
   const diff = source.diff ?? {};
-  const rawPatch = typeof diff.patch === 'string' ? diff.patch : '';
+  const rawPatch = sanitizeLog(typeof diff.patch === 'string' ? diff.patch : '');
   const files = Array.isArray(diff.files) ? diff.files : [];
   const { text, truncated } = selectRelevantLines(rawPatch, MAX_DIFF_LINES);
 
