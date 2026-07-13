@@ -1,0 +1,16 @@
+> copa-figurinhas@1.0.0 ci
+> npm ci --workspaces
+
+npm error code EACCES
+npm error syscall mkdir
+npm error path /home/runner/.npm/_cacache
+npm error errno -13
+npm error Error: EACCES: permission denied, mkdir '/home/runner/.npm/_cacache'
+npm error  [Error: EACCES: permission denied, mkdir '/home/runner/.npm/_cacache'] {
+npm error   errno: -13,
+npm error   syscall: 'mkdir'
+npm error }
+npm error
+npm error The operation was rejected by your operating system.
+npm error 403 Forbidden - GET https://registry.internal.example.com/@copa-figurinhas%2fshared
+npm error O token do job não tem escopo de leitura no registry privado.

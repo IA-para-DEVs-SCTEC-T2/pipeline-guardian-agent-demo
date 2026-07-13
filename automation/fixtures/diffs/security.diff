@@ -1,0 +1,23 @@
+diff --git a/backend/src/config.js b/backend/src/config.js
+new file mode 100644
+index 0000000..7ab91cd
+--- /dev/null
++++ b/backend/src/config.js
+@@ -0,0 +1,12 @@
++export const config = {
++  port: process.env.PORT ?? 3001,
++  // TODO: mover para variável de ambiente antes do merge
++  OPENAI_API_KEY: 'sk-proj-9xTgQwErTyUiOpAsDfGhJkLzXcVbNm1234567890',
++  GITHUB_TOKEN: 'ghp_9AbCdEfGhIjKlMnOpQrStUvWxYz012345',
++  DEPLOY_PASSWORD: 'Trof3u-Copa-2026!',
++};
+diff --git a/scripts/publish.sh b/scripts/publish.sh
+index 2c3d4e5..8f9a0b1 100755
+--- a/scripts/publish.sh
++++ b/scripts/publish.sh
+@@ -1,3 +1,5 @@
+ #!/usr/bin/env bash
+ set -euo pipefail
++
++curl -H "Authorization: Bearer github_pat_11ABCDEFG0aBcDeFgHiJkLmNoPqRsTuVwXyZ" \
++  https://ci-bot:S3nh4-Sup3r-S3cr3t4@registry.internal.example.com/publish

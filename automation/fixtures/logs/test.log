@@ -1,0 +1,29 @@
+> @copa-figurinhas/backend@1.0.0 test
+> vitest run
+
+ RUN  v2.1.9 /app/backend
+
+ ✓ test/stickers.test.js (11 tests) 214ms
+ ❯ test/report.test.js (9 tests | 1 failed) 38ms
+   ✓ duplicateCopies > retorna 0 quando quantity é 0
+   ✓ duplicateCopies > retorna quantity - 1 quando há repetidas
+   ✕ buildReport: percentual de conclusão > calcula o percentual arredondado de figurinhas obtidas
+
+ FAIL  test/report.test.js > buildReport: percentual de conclusão > calcula o percentual arredondado de figurinhas obtidas
+
+AssertionError: expected 33 to be 50 // Object.is equality
+
+- Expected
++ Received
+
+- 50
++ 33
+
+ ❯ test/report.test.js:26:44
+     24|     ]);
+     25|     expect(report.totalRegistered).toBe(2);
+     26|     expect(report.completionPercentage).toBe(50);
+       |                                            ^
+
+ Test Files  1 failed | 1 passed (2)
+      Tests  1 failed | 19 passed (20)

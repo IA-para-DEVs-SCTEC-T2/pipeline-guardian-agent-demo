@@ -1,0 +1,22 @@
+{
+  "name": "@copa-figurinhas/automation",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Pipeline Guardian — agente que diagnostica falhas de pipeline a partir de metadados, logs e diff de Pull Request.",
+  "main": "src/analyze-pipeline.mjs",
+  "scripts": {
+    "analyze": "node src/analyze-pipeline.mjs",
+    "fixture": "node src/analyze-pipeline.mjs --fixture",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "vitest": "^2.1.9"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "openai": "^6.46.0",
+    "zod": "^3.24.1"
+  }
+}

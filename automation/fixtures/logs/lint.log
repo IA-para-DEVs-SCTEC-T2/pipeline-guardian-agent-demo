@@ -1,0 +1,16 @@
+> copa-figurinhas@1.0.0 lint
+> eslint .
+
+/app/frontend/src/components/StickerGrid.jsx
+  12:9   error  'sortedStickers' is assigned a value but never used  no-unused-vars
+  27:22  error  'formatPlayerName' is not defined                    no-undef
+
+/app/frontend/src/utils.js
+  41:3   error  'positionLabel' is assigned a value but never used   no-unused-vars
+
+✖ 3 problems (3 errors, 0 warnings)
+
+ESLint found errors. Fix them before pushing.
+npm error Lifecycle script `lint` failed with error:
+npm error code 1
+npm error workspace copa-figurinhas

@@ -1,0 +1,17 @@
+> @copa-figurinhas/backend@1.0.0 start
+> node src/server.js
+
+node:internal/modules/esm/resolve:283
+  throw new ERR_MODULE_NOT_FOUND(packageName, fileURLToPath(base), null);
+        ^
+
+Error [ERR_MODULE_NOT_FOUND]: Cannot find package 'zod' imported from /app/backend/src/schemas.js
+    at packageResolve (node:internal/modules/esm/resolve:283:9)
+    at moduleResolve (node:internal/modules/esm/resolve:952:20)
+    at defaultResolve (node:internal/modules/esm/resolve:1188:11) {
+  code: 'ERR_MODULE_NOT_FOUND'
+}
+
+Node.js v22.22.3
+npm error Lifecycle script `start` failed with error:
+npm error code 1
