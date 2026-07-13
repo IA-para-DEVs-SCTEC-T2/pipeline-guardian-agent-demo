@@ -6,6 +6,7 @@ const router = Router();
 
 // GET /api/report
 router.get('/', (req, res) => {
+  const reportPreview = buildReport(listStickers());
   res.json(buildReport(listStickers()));
 });
 
