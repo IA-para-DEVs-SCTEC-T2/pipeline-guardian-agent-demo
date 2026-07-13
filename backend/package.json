@@ -8,7 +8,7 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
-    "test": "node --test",
+    "test": "vitest run",
     "lint": "eslint ."
   },
   "dependencies": {
@@ -17,6 +17,7 @@
     "zod": "^3.24.1"
   },
   "devDependencies": {
-    "supertest": "^7.0.0"
+    "supertest": "^7.0.0",
+    "vitest": "^2.1.8"
   }
 }

@@ -9,7 +9,7 @@ Contexto para agentes e para quem for evoluir este repositório.
 - **JavaScript + ES Modules** em todo o projeto. **Não usar TypeScript.**
 - **Backend**: Express com `app.js` (cria e configura a aplicação, sem abrir
   porta) separado de `server.js` (chama `listen`). Essa separação permite testar
-  a API com supertest sem subir rede.
+  a API com Vitest + Supertest sem subir rede.
 - **Validação com Zod** centralizada em `backend/src/schemas.js`. Erros de
   validação são convertidos para resposta HTTP 400 no `errorHandler`.
 - **Dados em memória** no `backend/src/store/store.js`. `resetStore()` recria o
@@ -30,7 +30,9 @@ Contexto para agentes e para quem for evoluir este repositório.
 npm install            # instala todos os workspaces
 npm run dev            # backend + frontend (concurrently)
 npm run lint           # ESLint no monorepo
-npm run test           # testes backend (node:test) + frontend (vitest)
+npm run test           # testes backend (vitest + supertest) + frontend (vitest + RTL)
+npm run test:backend   # apenas os testes do backend
+npm run test:frontend  # apenas os testes do frontend
 npm run build          # build do frontend
 npm run ci             # lint + test + build
 ```

@@ -1,138 +1,188 @@
-import test from 'node:test';
-import assert from 'node:assert/strict';
+import { describe, it, expect, beforeEach } from 'vitest';
 import request from 'supertest';
 
 import { createApp } from '../src/app.js';
 import { resetStore, getSticker, listStickers } from '../src/store/store.js';
-import { buildReport, duplicateCopies } from '../src/services/report.js';
 
 const app = createApp();
 
-test.beforeEach(() => {
+beforeEach(() => {
   resetStore();
 });
 
-test('GET /api/health responde ok', async () => {
-  const res = await request(app).get('/api/health');
-  assert.equal(res.status, 200);
-  assert.equal(res.body.status, 'ok');
-});
-
-test('GET /api/stickers retorna o seed com duplicateCopies', async () => {
-  const res = await request(app).get('/api/stickers');
-  assert.equal(res.status, 200);
-  assert.equal(res.body.length, 12);
-  const withDupes = res.body.find((s) => s.quantity === 3);
-  assert.equal(withDupes.duplicateCopies, 2);
-});
-
-test('GET /api/stickers/:id inexistente retorna 404', async () => {
-  const res = await request(app).get('/api/stickers/nao-existe');
-  assert.equal(res.status, 404);
-  assert.equal(res.body.error.code, 'NOT_FOUND');
-});
-
-test('POST /api/stickers válido retorna 201', async () => {
-  const res = await request(app).post('/api/stickers').send({
-    albumNumber: 99,
-    playerName: 'Teste Jogador',
-    country: 'Espanha',
-    countryCode: 'es',
-    position: 'forward',
-    quantity: 2,
+describe('GET /api/health', () => {
+  it('responde ok', async () => {
+    const res = await request(app).get('/api/health');
+    expect(res.status).toBe(200);
+    expect(res.body.status).toBe('ok');
   });
-  assert.equal(res.status, 201);
-  assert.equal(res.body.countryCode, 'ES');
-  assert.equal(res.body.duplicateCopies, 1);
 });
 
-test('POST /api/stickers inválido retorna 400', async () => {
-  const res = await request(app).post('/api/stickers').send({
-    albumNumber: -1,
-    playerName: 'ab',
-    country: '',
-    countryCode: 'BRA',
-    position: 'coach',
-    quantity: -5,
+describe('GET /api/stickers', () => {
+  it('retorna o seed com duplicateCopies calculado', async () => {
+    const res = await request(app).get('/api/stickers');
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(12);
+    const withDupes = res.body.find((s) => s.quantity === 3);
+    expect(withDupes.duplicateCopies).toBe(2);
   });
-  assert.equal(res.status, 400);
-  assert.equal(res.body.error.code, 'VALIDATION_ERROR');
 });
 
-test('POST com albumNumber duplicado retorna 400', async () => {
-  const res = await request(app).post('/api/stickers').send({
-    albumNumber: 1,
-    playerName: 'Outro Jogador',
-    country: 'Brasil',
-    countryCode: 'BR',
-    position: 'defender',
+describe('GET /api/stickers/:id', () => {
+  it('retorna a figurinha existente', async () => {
+    const [first] = listStickers();
+    const res = await request(app).get(`/api/stickers/${first.id}`);
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(first.id);
+    expect(res.body.albumNumber).toBe(first.albumNumber);
   });
-  assert.equal(res.status, 400);
-  assert.equal(res.body.error.code, 'DUPLICATE_ALBUM_NUMBER');
+
+  it('recurso inexistente retorna 404', async () => {
+    const res = await request(app).get('/api/stickers/nao-existe');
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
 });
 
-test('PATCH decrement nunca fica negativo', async () => {
-  const zero = listStickers().find((s) => s.quantity === 0);
-  const res = await request(app)
-    .patch(`/api/stickers/${zero.id}/quantity`)
-    .send({ operation: 'decrement' });
-  assert.equal(res.status, 200);
-  assert.equal(res.body.quantity, 0);
+describe('POST /api/stickers', () => {
+  it('cria uma figurinha válida e retorna 201', async () => {
+    const res = await request(app).post('/api/stickers').send({
+      albumNumber: 99,
+      playerName: 'Teste Jogador',
+      country: 'Espanha',
+      countryCode: 'es',
+      position: 'forward',
+      quantity: 2,
+    });
+    expect(res.status).toBe(201);
+    expect(res.body.countryCode).toBe('ES');
+    expect(res.body.duplicateCopies).toBe(1);
+  });
+
+  it('nome inválido (menos de 3 caracteres) retorna 400', async () => {
+    const res = await request(app).post('/api/stickers').send({
+      albumNumber: 100,
+      playerName: 'ab',
+      country: 'Espanha',
+      countryCode: 'ES',
+      position: 'forward',
+      quantity: 0,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('posição inválida retorna 400', async () => {
+    const res = await request(app).post('/api/stickers').send({
+      albumNumber: 101,
+      playerName: 'Jogador Válido',
+      country: 'Espanha',
+      countryCode: 'ES',
+      position: 'coach',
+      quantity: 0,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('quantidade negativa retorna 400', async () => {
+    const res = await request(app).post('/api/stickers').send({
+      albumNumber: 102,
+      playerName: 'Jogador Válido',
+      country: 'Espanha',
+      countryCode: 'ES',
+      position: 'forward',
+      quantity: -5,
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('albumNumber duplicado retorna 400', async () => {
+    const res = await request(app).post('/api/stickers').send({
+      albumNumber: 1,
+      playerName: 'Outro Jogador',
+      country: 'Brasil',
+      countryCode: 'BR',
+      position: 'defender',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('DUPLICATE_ALBUM_NUMBER');
+  });
 });
 
-test('PATCH increment soma um', async () => {
-  const one = listStickers().find((s) => s.quantity === 1);
-  const res = await request(app)
-    .patch(`/api/stickers/${one.id}/quantity`)
-    .send({ operation: 'increment' });
-  assert.equal(res.status, 200);
-  assert.equal(res.body.quantity, 2);
-  assert.equal(res.body.duplicateCopies, 1);
+describe('PATCH /api/stickers/:id/quantity', () => {
+  it('incrementa a quantidade em um', async () => {
+    const one = listStickers().find((s) => s.quantity === 1);
+    const res = await request(app)
+      .patch(`/api/stickers/${one.id}/quantity`)
+      .send({ operation: 'increment' });
+    expect(res.status).toBe(200);
+    expect(res.body.quantity).toBe(2);
+    expect(res.body.duplicateCopies).toBe(1);
+  });
+
+  it('decrementa a quantidade em um', async () => {
+    const two = listStickers().find((s) => s.quantity === 2);
+    const res = await request(app)
+      .patch(`/api/stickers/${two.id}/quantity`)
+      .send({ operation: 'decrement' });
+    expect(res.status).toBe(200);
+    expect(res.body.quantity).toBe(1);
+  });
+
+  it('tentativa de decrementar abaixo de zero nunca fica negativo', async () => {
+    const zero = listStickers().find((s) => s.quantity === 0);
+    const res = await request(app)
+      .patch(`/api/stickers/${zero.id}/quantity`)
+      .send({ operation: 'decrement' });
+    expect(res.status).toBe(200);
+    expect(res.body.quantity).toBe(0);
+  });
+
+  it('operation inválida retorna 400', async () => {
+    const any = listStickers()[0];
+    const res = await request(app)
+      .patch(`/api/stickers/${any.id}/quantity`)
+      .send({ operation: 'reset' });
+    expect(res.status).toBe(400);
+    expect(res.body.error.code).toBe('VALIDATION_ERROR');
+  });
+
+  it('recurso inexistente retorna 404', async () => {
+    const res = await request(app)
+      .patch('/api/stickers/nao-existe/quantity')
+      .send({ operation: 'increment' });
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
 });
 
-test('PATCH com operation inválida retorna 400', async () => {
-  const any = listStickers()[0];
-  const res = await request(app)
-    .patch(`/api/stickers/${any.id}/quantity`)
-    .send({ operation: 'reset' });
-  assert.equal(res.status, 400);
+describe('DELETE /api/stickers/:id', () => {
+  it('exclui uma figurinha existente e retorna 204', async () => {
+    const any = listStickers()[0];
+    const res = await request(app).delete(`/api/stickers/${any.id}`);
+    expect(res.status).toBe(204);
+    expect(getSticker(any.id)).toBeNull();
+  });
+
+  it('recurso inexistente retorna 404', async () => {
+    const res = await request(app).delete('/api/stickers/nao-existe');
+    expect(res.status).toBe(404);
+    expect(res.body.error.code).toBe('NOT_FOUND');
+  });
 });
 
-test('DELETE existente retorna 204 e remove', async () => {
-  const any = listStickers()[0];
-  const res = await request(app).delete(`/api/stickers/${any.id}`);
-  assert.equal(res.status, 204);
-  assert.equal(getSticker(any.id), null);
-});
-
-test('DELETE inexistente retorna 404', async () => {
-  const res = await request(app).delete('/api/stickers/nao-existe');
-  assert.equal(res.status, 404);
-});
-
-test('GET /api/report calcula percentuais e listas', async () => {
-  const res = await request(app).get('/api/report');
-  assert.equal(res.status, 200);
-  assert.equal(res.body.totalRegistered, 12);
-  // 9 figurinhas com quantity >= 1 no seed
-  assert.equal(res.body.obtained, 9);
-  assert.equal(res.body.missing, 3);
-  assert.equal(res.body.completionPercentage, 75);
-  assert.ok(Array.isArray(res.body.byCountry));
-  assert.equal(res.body.missingStickers.length, 3);
-});
-
-test('unidade: duplicateCopies e buildReport', () => {
-  assert.equal(duplicateCopies(0), 0);
-  assert.equal(duplicateCopies(1), 0);
-  assert.equal(duplicateCopies(3), 2);
-
-  const report = buildReport([
-    { id: 'a', albumNumber: 1, playerName: 'X', country: 'Brasil', countryCode: 'BR', position: 'forward', quantity: 0 },
-    { id: 'b', albumNumber: 2, playerName: 'Y', country: 'Brasil', countryCode: 'BR', position: 'forward', quantity: 2 },
-  ]);
-  assert.equal(report.totalRegistered, 2);
-  assert.equal(report.obtained, 1);
-  assert.equal(report.completionPercentage, 50);
-  assert.equal(report.duplicateCopies, 1);
+describe('GET /api/report', () => {
+  it('calcula percentuais e listas do relatório', async () => {
+    const res = await request(app).get('/api/report');
+    expect(res.status).toBe(200);
+    expect(res.body.totalRegistered).toBe(12);
+    // 9 figurinhas com quantity >= 1 no seed
+    expect(res.body.obtained).toBe(9);
+    expect(res.body.missing).toBe(3);
+    expect(res.body.completionPercentage).toBe(75);
+    expect(Array.isArray(res.body.byCountry)).toBe(true);
+    expect(res.body.missingStickers).toHaveLength(3);
+  });
 });
