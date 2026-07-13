@@ -159,6 +159,7 @@ export async function analyzePipeline({
     evidence,
     failedCommands: context.results.failedCommands,
     limitations: context.limitations,
+    diffPatch: context.diff.patch,
   });
 
   let core = deterministic;

@@ -21,13 +21,13 @@ export const CLASSIFICATION_RULES = [
     type: 'permission',
     priority: 70,
     riskLevel: 'high',
-    patterns: [/\bEACCES\b/, /permission denied/i, /403 Forbidden/i],
+    patterns: [/permission denied/i, /\bEACCES\b/, /403 Forbidden/i],
   },
   {
     type: 'dependency',
     priority: 60,
     riskLevel: 'medium',
-    patterns: [/\bERR_MODULE_NOT_FOUND\b/, /Cannot find package/i, /module not found/i],
+    patterns: [/Cannot find module/i, /\bERR_MODULE_NOT_FOUND\b/, /Cannot find package/i, /module not found/i],
   },
   {
     type: 'environment',
@@ -219,6 +219,9 @@ export function classifyFailure({
  * @param {Array<{ source: string, excerpt: string }>} input.evidence
  * @param {Array<object>} input.failedCommands
  * @param {string[]} [input.limitations]
+ * @param {string} [input.diffPatch] diff da Pull Request, já mascarado — usado
+ *   só para correlacionar uma causa já estabelecida pelos logs, nunca para
+ *   decidir se houve falha (essa decisão é só dos logs de quem falhou).
  * @returns {object} objeto compatível com `modelDiagnosisSchema`
  */
 export function buildDeterministicDiagnosis({
@@ -226,6 +229,7 @@ export function buildDeterministicDiagnosis({
   evidence = [],
   failedCommands = [],
   limitations = [],
+  diffPatch = '',
 }) {
   const { failureType, signal, confidence, riskLevel } = classification;
   const commandList = failedCommands.map((command) => command.command).join(', ');
@@ -234,7 +238,7 @@ export function buildDeterministicDiagnosis({
     summary: summaryFor(failureType, failedCommands),
     signal,
     failureType,
-    probableCause: PROBABLE_CAUSES[failureType],
+    probableCause: correlateProbableCause({ classification, diffPatch }) ?? PROBABLE_CAUSES[failureType],
     evidence,
     impact: commandList
       ? `Pipeline interrompido em: ${commandList}. A entrega desta Pull Request fica bloqueada até a correção.`
@@ -247,6 +251,41 @@ export function buildDeterministicDiagnosis({
       ...limitations,
     ],
   };
+}
+
+/**
+ * Diff removendo o desconto da primeira cópia em `duplicateCopies`
+ * (`Math.max(quantity - 1, 0)`) e devolvendo `quantity` direto.
+ */
+const DUPLICATE_COPIES_DISCOUNT_REMOVED = /^-.*Math\.max\(\s*quantity\s*-\s*1\s*,\s*0\s*\)/m;
+const DUPLICATE_COPIES_RETURNS_QUANTITY = /^\+.*return\s+quantity\s*;/m;
+
+/**
+ * Correlaciona resultado de teste + diff da PR para uma causa provável mais
+ * específica que o texto genérico de `PROBABLE_CAUSES`. Só se aplica quando
+ * as DUAS evidências (log de teste com padrão reconhecido e diff com a
+ * alteração de regra) estão presentes — nunca força a conclusão.
+ *
+ * @param {object} input
+ * @param {ReturnType<typeof classifyFailure>} input.classification
+ * @param {string} input.diffPatch
+ * @returns {string|null}
+ */
+export function correlateProbableCause({ classification, diffPatch = '' }) {
+  if (classification.failureType !== 'test') return null;
+  if (classification.matches.length === 0) return null;
+  if (!diffPatch.includes('duplicateCopies')) return null;
+
+  const removedDiscount = DUPLICATE_COPIES_DISCOUNT_REMOVED.test(diffPatch);
+  const addedRawQuantity = DUPLICATE_COPIES_RETURNS_QUANTITY.test(diffPatch);
+  if (!removedDiscount || !addedRawQuantity) return null;
+
+  return (
+    'A regra de `duplicateCopies` foi alterada: o desconto da primeira cópia ' +
+    '(`Math.max(quantity - 1, 0)`) foi removido e a função passou a devolver ' +
+    '`quantity` diretamente. Isso faz a primeira unidade obtida ser contabilizada ' +
+    'como repetida, o que diverge do valor esperado no teste que falhou.'
+  );
 }
 
 const PROBABLE_CAUSES = {
@@ -318,6 +357,10 @@ function summaryFor(failureType, failedCommands) {
 }
 
 function signalFor(type, matches) {
+  // `matches` já vem ordenado por prioridade (ver `selectMatches`): o primeiro
+  // item é o padrão mais específico encontrado, não o que apareceu primeiro no
+  // log. É isso que evita um sinal genérico como `test:FAIL` quando o log tem
+  // uma `AssertionError` — o cabeçalho `FAIL` costuma vir antes dela no log.
   const first = matches[0];
   if (!first) return `${type}:pattern-match`;
 
@@ -336,6 +379,31 @@ function confidenceFor({ score, ambiguous, hasFailedCommands }) {
   return 'low';
 }
 
+/**
+ * Filtra e ordena os matches de um tipo por especificidade, não por posição no
+ * log. A ordem dos padrões em `CLASSIFICATION_RULES` já é a prioridade: o
+ * último padrão de cada regra (`FAIL`, `ESLint`, …) é o marcador genérico —
+ * só sobra como sinal/evidência quando nenhum padrão mais específico bateu.
+ *
+ * @param {ReturnType<typeof findPatternMatches>} matches
+ * @param {string} type
+ * @returns {ReturnType<typeof findPatternMatches>}
+ */
 function selectMatches(matches, type) {
-  return matches.filter((match) => match.type === type).slice(0, MAX_MATCHES_PER_TYPE);
+  const rule = CLASSIFICATION_RULES.find((item) => item.type === type);
+  const priorityIndex = new Map(rule.patterns.map((pattern, index) => [String(pattern), index]));
+  const lastIndex = rule.patterns.length - 1;
+
+  const typeMatches = matches.filter((match) => match.type === type);
+  const hasSpecificMatch = typeMatches.some((match) => (priorityIndex.get(match.pattern) ?? 0) < lastIndex);
+  const filtered = hasSpecificMatch
+    ? typeMatches.filter((match) => (priorityIndex.get(match.pattern) ?? 0) < lastIndex)
+    : typeMatches;
+
+  return [...filtered]
+    .sort((a, b) => {
+      const priorityDiff = (priorityIndex.get(a.pattern) ?? 99) - (priorityIndex.get(b.pattern) ?? 99);
+      return priorityDiff !== 0 ? priorityDiff : a.line - b.line;
+    })
+    .slice(0, MAX_MATCHES_PER_TYPE);
 }
