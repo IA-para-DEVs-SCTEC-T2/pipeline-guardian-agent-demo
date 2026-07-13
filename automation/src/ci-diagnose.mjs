@@ -13,6 +13,7 @@
 
 import { existsSync, readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import { analyzePipeline, REPO_ROOT, writeReports } from './analyze-pipeline.mjs';
 import { redactSecrets } from './redact-secrets.mjs';
@@ -130,7 +131,14 @@ async function main() {
   // O job `diagnose` não falha por causa da decisão de deploy.
 }
 
-main().catch((error) => {
-  process.stderr.write(`[pipeline-guardian] erro no diagnose: ${redactSecrets(String(error.stack ?? error.message))}\n`);
-  process.exitCode = 1;
-});
+// `buildCiSource` é reusado pelo deploy assistido (`deploy-assessment.mjs`):
+// importar este módulo não pode disparar o diagnóstico.
+const invokedDirectly = process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+if (invokedDirectly) {
+  main().catch((error) => {
+    process.stderr.write(
+      `[pipeline-guardian] erro no diagnose: ${redactSecrets(String(error.stack ?? error.message))}\n`,
+    );
+    process.exitCode = 1;
+  });
+}

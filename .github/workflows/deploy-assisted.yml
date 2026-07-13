@@ -1,0 +1,333 @@
+name: Deploy assistido
+
+# Deploy assistido: o agente AVALIA, a política DECIDE, a pessoa APROVA.
+#
+# Nenhum job deste workflow publica em infraestrutura real. O "deploy" é
+# simulado: produz um `deployment-manifest.json` com `status: simulated`
+# descrevendo o que teria sido promovido.
+#
+# Disparo manual apenas — nada aqui roda a partir de um push.
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Ambiente alvo da promoção
+        type: choice
+        required: true
+        default: staging
+        options:
+          - staging
+          - production
+
+      releaseVersion:
+        description: Versão da release (tag, branch ou SHA) a ser avaliada
+        type: string
+        required: true
+
+# Permissão mínima: os jobs só precisam ler o repositório. Nenhum job deste
+# workflow escreve no repositório, comenta em PR ou toca em secrets.
+permissions:
+  contents: read
+
+# Uma promoção por ambiente de cada vez. `cancel-in-progress: false` de
+# propósito: um deploy aguardando aprovação humana não pode ser cancelado por
+# um disparo novo.
+concurrency:
+  group: deploy-assisted-${{ inputs.environment }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  CI: "true"
+  NO_COLOR: "1"
+  FORCE_COLOR: "0"
+  TERM: dumb
+
+jobs:
+  # ---------------------------------------------------------------------
+  # assess — roda os gates técnicos na releaseVersion, chama o Pipeline
+  # Guardian e produz a avaliação de prontidão.
+  #
+  # Os gates NÃO derrubam o job: um gate vermelho é um dado de entrada do
+  # agente, não um erro de infraestrutura. Quem transforma isso em decisão é
+  # a política determinística (`deploy-policy.mjs`), e o resultado dela sai
+  # daqui como `policyDecision`.
+  # ---------------------------------------------------------------------
+  assess:
+    name: Assess (Pipeline Guardian)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    outputs:
+      policyDecision: ${{ steps.assessment.outputs.policyDecision }}
+      agentRecommendation: ${{ steps.assessment.outputs.agentRecommendation }}
+      requiresHumanApproval: ${{ steps.assessment.outputs.requiresHumanApproval }}
+      riskLevel: ${{ steps.assessment.outputs.riskLevel }}
+
+    steps:
+      - name: Checkout da releaseVersion
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.releaseVersion }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # O SHA avaliado é o da releaseVersion que acabou de ser clonada — não o
+      # do ref de onde o workflow foi disparado.
+      - name: Resolve commit avaliado
+        id: commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
+      # Cada gate grava seu log e publica o resultado como output, sem derrubar
+      # o job. `set -o pipefail` preserva o exit code através do `tee`.
+      - name: Gate — lint
+        id: lint
+        shell: bash
+        run: |
+          mkdir -p reports/input
+          set -o pipefail
+          if npm run lint 2>&1 | tee reports/input/lint.log; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gate — testes
+        id: tests
+        shell: bash
+        run: |
+          mkdir -p reports/input
+          set -o pipefail
+          if npm run test 2>&1 | tee reports/input/tests.log; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Gate — build
+        id: build
+        shell: bash
+        run: |
+          mkdir -p reports/input
+          set -o pipefail
+          if npm run build 2>&1 | tee reports/input/build.log; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Preservar logs dos gates
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deploy-gate-logs
+          path: reports/input/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      # Os inputs do workflow chegam ao agente como variáveis de ambiente, nunca
+      # interpolados dentro do shell.
+      - name: Executar Pipeline Guardian (avaliação de deploy)
+        id: assessment
+        env:
+          DEPLOY_ENVIRONMENT: ${{ inputs.environment }}
+          RELEASE_VERSION: ${{ inputs.releaseVersion }}
+
+          QUALITY_RESULT: ${{ steps.lint.outputs.result }}
+          TESTS_RESULT: ${{ steps.tests.outputs.result }}
+          BUILD_RESULT: ${{ steps.build.outputs.result }}
+
+          GITHUB_SHA: ${{ steps.commit.outputs.sha }}
+
+          # Opcionais. Sem eles, o agente usa o fallback determinístico e ainda
+          # produz uma avaliação válida.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+
+        run: node automation/src/deploy-assessment.mjs
+
+      - name: Publicar avaliação no Job Summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ -f reports/deploy-assessment.md ]; then
+            cat reports/deploy-assessment.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Deploy assistido"
+              echo
+              echo "A avaliação não foi gerada. Nenhuma promoção é possível sem ela."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publicar avaliação como artefato
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deploy-assessment
+          path: |
+            reports/deploy-assessment.json
+            reports/deploy-assessment.md
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------
+  # deploy-staging — só existe quando a POLÍTICA liberou.
+  #
+  # A condição lê `policyDecision`, nunca `agentRecommendation`: a opinião do
+  # agente não abre porta nenhuma.
+  # ---------------------------------------------------------------------
+  deploy-staging:
+    name: Deploy staging (simulado)
+    needs: assess
+
+    if: >-
+      ${{
+        inputs.environment == 'staging' &&
+        needs.assess.outputs.policyDecision == 'eligible_for_staging'
+      }}
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    environment:
+      name: staging
+
+    steps:
+      - name: Checkout da releaseVersion
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.releaseVersion }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Baixar avaliação
+        uses: actions/download-artifact@v8
+        with:
+          name: deploy-assessment
+          path: reports
+
+      # O manifesto nasce da avaliação assinada pela política. O script revalida
+      # a decisão: se ela não for `eligible_for_staging`, ele falha em vez de
+      # registrar uma promoção que ninguém autorizou.
+      - name: Deploy simulado
+        env:
+          ASSESSMENT_FILE: reports/deploy-assessment.json
+        run: node automation/src/deploy-assessment.mjs --manifest
+
+      - name: Resumo do deploy simulado
+        shell: bash
+        run: |
+          {
+            echo "## 🚀 Deploy simulado — staging"
+            echo
+            echo '```json'
+            cat reports/deployment-manifest.json
+            echo '```'
+            echo
+            echo "> Nada foi publicado em infraestrutura real."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar manifesto
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployment-manifest-staging
+          path: reports/deployment-manifest.json
+          retention-days: 30
+
+  # ---------------------------------------------------------------------
+  # deploy-production — só existe quando a política pediu aprovação humana.
+  #
+  # O gate de aprovação é do GitHub Environment `production` (required
+  # reviewers): o job fica PENDENTE até alguém aprovar. Nada abaixo executa
+  # antes disso — e o agente não tem como conceder essa aprovação.
+  # ---------------------------------------------------------------------
+  deploy-production:
+    name: Deploy production (simulado, com aprovação)
+    needs: assess
+
+    if: >-
+      ${{
+        inputs.environment == 'production' &&
+        needs.assess.outputs.policyDecision == 'requires_human_approval'
+      }}
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Configure em Settings › Environments › production:
+    #   - Required reviewers (obrigatório: é ele que segura o job)
+    #   - Deployment branches / tags, se quiser restringir a releaseVersion
+    environment:
+      name: production
+
+    steps:
+      - name: Checkout da releaseVersion
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ inputs.releaseVersion }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Baixar avaliação
+        uses: actions/download-artifact@v8
+        with:
+          name: deploy-assessment
+          path: reports
+
+      # Este passo só roda depois da aprovação humana no GitHub Environment.
+      # O manifesto registra `approvalRequired: true` e `status: simulated`.
+      - name: Deploy simulado (pós-aprovação)
+        env:
+          ASSESSMENT_FILE: reports/deploy-assessment.json
+        run: node automation/src/deploy-assessment.mjs --manifest
+
+      - name: Resumo do deploy simulado
+        shell: bash
+        run: |
+          {
+            echo "## 🚀 Deploy simulado — production"
+            echo
+            echo "Aprovação humana concedida no GitHub Environment \`production\`."
+            echo
+            echo '```json'
+            cat reports/deployment-manifest.json
+            echo '```'
+            echo
+            echo "> Nada foi publicado em infraestrutura real."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Publicar manifesto
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployment-manifest-production
+          path: reports/deployment-manifest.json
+          retention-days: 30
