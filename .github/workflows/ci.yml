@@ -21,6 +21,12 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+  # Sem cor e sem TTY: lint.log, tests.log e build.log precisam sair em texto
+  # puro para o Job Summary e para o Pipeline Guardian.
+  CI: "true"
+  NO_COLOR: "1"
+  FORCE_COLOR: "0"
+  TERM: dumb
 
 jobs:
   # ---------------------------------------------------------------------
