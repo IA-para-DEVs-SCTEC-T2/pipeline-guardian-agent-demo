@@ -76,6 +76,10 @@ export function applyDeployPolicy({ diagnosis, metadata, results, sensitive } = 
     blockers.push('confiança baixa no diagnóstico — não se promove o que não se entende.');
   }
 
+  if (diagnosis.riskLevel === 'high' && !securityIssue) {
+    blockers.push('risco alto apontado pelo diagnóstico — promoção bloqueada.');
+  }
+
   const relevantLimitations = findRelevantLimitations(diagnosis.limitations);
   if (relevantLimitations.length > 0) {
     blockers.push(`limitações relevantes na análise: ${relevantLimitations.join(' ')}`);
