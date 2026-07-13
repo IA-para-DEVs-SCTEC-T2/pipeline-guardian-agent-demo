@@ -1,0 +1,330 @@
+name: CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+  push:
+    branches:
+      - main
+
+# Permissão padrão mínima para todos os jobs.
+# O job diagnose recebe permissão adicional para comentar na PR.
+permissions:
+  contents: read
+
+# Evita manter várias execuções antigas da mesma PR ou branch.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # quality — executa ESLint, preserva o exit code e publica o log mesmo
+  # quando a verificação falha.
+  # ---------------------------------------------------------------------
+  quality:
+    name: Quality (lint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        shell: bash
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          npm run lint 2>&1 | tee reports/lint.log
+
+      - name: Upload lint log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: lint-log
+          path: reports/lint.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------
+  # tests — executa os testes, preserva o exit code e publica o log mesmo
+  # quando a suíte falha.
+  # ---------------------------------------------------------------------
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Test
+        shell: bash
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          npm run test 2>&1 | tee reports/tests.log
+
+      - name: Upload tests log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: tests-log
+          path: reports/tests.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------
+  # build — executa o build, preserva o exit code e publica o log mesmo
+  # quando o processo falha.
+  # ---------------------------------------------------------------------
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build
+        shell: bash
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          npm run build 2>&1 | tee reports/build.log
+
+      - name: Upload build log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: build-log
+          path: reports/build.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------
+  # diagnose — executa o Pipeline Guardian mesmo quando lint, testes ou
+  # build falham.
+  #
+  # O job é informativo: uma falha interna do agente não deve transformar
+  # um pipeline tecnicamente saudável em falha.
+  # ---------------------------------------------------------------------
+  diagnose:
+    name: Diagnose (Pipeline Guardian)
+    needs:
+      - quality
+      - tests
+      - build
+
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    # O diagnóstico é informativo e não é um gate técnico.
+    continue-on-error: true
+
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Prepare input directory
+        run: mkdir -p reports/input
+
+      # Os downloads são best-effort. Caso um job tenha falhado antes de
+      # publicar seu artefato, o agente ainda analisa os dados disponíveis.
+      - name: Download lint log
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: lint-log
+          path: reports/input
+
+      - name: Download tests log
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: tests-log
+          path: reports/input
+
+      - name: Download build log
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: build-log
+          path: reports/input
+
+      - name: Collect Pull Request diff
+        if: ${{ github.event_name == 'pull_request' }}
+        shell: bash
+        run: |
+          git diff \
+            --no-color \
+            --find-renames \
+            "${{ github.event.pull_request.base.sha }}" \
+            "${{ github.event.pull_request.head.sha }}" \
+            > reports/input/pr.diff
+
+      - name: Execute Pipeline Guardian
+        env:
+          # Token temporário do workflow.
+          GITHUB_TOKEN: ${{ github.token }}
+
+          # Opcionais. Sem eles, o agente usa fallback determinístico.
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+
+          # Comentários são habilitados somente para PRs do próprio
+          # repositório. PRs de forks não recebem token de escrita.
+          AUTOMATION_ALLOW_PR_COMMENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REF_NAME: ${{ github.head_ref || github.ref_name }}
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_WORKFLOW: ${{ github.workflow }}
+
+          DEPLOY_ENVIRONMENT: staging
+
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+
+        run: node automation/src/ci-diagnose.mjs
+
+      - name: Add diagnosis to Job Summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ -f reports/diagnosis.md ]; then
+            cat reports/diagnosis.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Pipeline Guardian"
+              echo
+              echo "O diagnóstico não foi gerado."
+              echo
+              echo "Consulte os logs do job para identificar a falha."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload diagnosis artifacts
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pipeline-guardian-diagnosis
+          path: |
+            reports/diagnosis.json
+            reports/diagnosis.md
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Upload PR diff artifact
+        if: ${{ always() && github.event_name == 'pull_request' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pr-diff
+          path: reports/input/pr.diff
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------
+  # ci-gate — resultado final do pipeline.
+  #
+  # Aguarda o diagnóstico terminar, mas decide o status exclusivamente
+  # com base em quality, tests e build.
+  # ---------------------------------------------------------------------
+  ci-gate:
+    name: CI Gate
+    needs:
+      - quality
+      - tests
+      - build
+      - diagnose
+
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check required jobs
+        shell: bash
+        run: |
+          echo "quality:  ${{ needs.quality.result }}"
+          echo "tests:    ${{ needs.tests.result }}"
+          echo "build:    ${{ needs.build.result }}"
+          echo "diagnose: ${{ needs.diagnose.result }} (informativo)"
+
+          if [ "${{ needs.quality.result }}" != "success" ] || \
+             [ "${{ needs.tests.result }}" != "success" ] || \
+             [ "${{ needs.build.result }}" != "success" ]; then
+            echo
+            echo "CI Gate: falhou."
+            echo "Pelo menos um job técnico obrigatório não teve sucesso."
+            exit 1
+          fi
+
+          echo
+          echo "CI Gate: tudo verde."
