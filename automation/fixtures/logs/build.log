@@ -1,0 +1,17 @@
+> @copa-figurinhas/frontend@1.0.0 build
+> vite build
+
+vite v6.0.7 building for production...
+transforming...
+✓ 28 modules transformed.
+
+x Build failed in 1.42s
+error during build:
+[vite:build-import-analysis] Could not resolve "./components/StickerFilters" from "src/App.jsx"
+file: /app/frontend/src/App.jsx:4:29
+
+RollupError: Could not resolve "./components/StickerFilters" from "src/App.jsx"
+    at getRollupError (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:397:41)
+    at error (file:///app/node_modules/rollup/dist/es/shared/parseAst.js:393:42)
+
+npm error code 1

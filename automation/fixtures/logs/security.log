@@ -1,0 +1,21 @@
+> copa-figurinhas@1.0.0 scan:secrets
+> gitleaks protect --staged --verbose
+
+[gitleaks] segredo detectado em backend/src/config.js:12
+  Regra:  generic-api-key
+  Trecho: OPENAI_API_KEY=sk-proj-9xTgQwErTyUiOpAsDfGhJkLzXcVbNm1234567890
+
+[gitleaks] token detectado em .github/workflows/deploy.yml:24
+  Regra:  github-pat
+  Trecho: Authorization: Bearer ghp_9AbCdEfGhIjKlMnOpQrStUvWxYz012345
+
+[gitleaks] credencial detectada em scripts/publish.sh:3
+  Regra:  url-credentials
+  Trecho: npm publish --registry https://ci-bot:S3nh4-Sup3r-S3cr3t4@registry.internal.example.com
+
+[gitleaks] credencial detectada em backend/src/session.js:31
+  Regra:  cookie
+  Trecho: Set-Cookie: session_id=8f3ab1c2d4e5f6a7b8c9; Path=/; HttpOnly
+
+3 leaks found in staged changes
+npm error code 1

@@ -1,0 +1,26 @@
+diff --git a/backend/src/services/report.js b/backend/src/services/report.js
+index 3f21ab8..9c14de2 100644
+--- a/backend/src/services/report.js
++++ b/backend/src/services/report.js
+@@ -12,9 +12,9 @@ export function duplicateCopies(quantity) {
+ export function buildReport(stickers) {
+   const totalRegistered = stickers.length;
+-  const obtained = stickers.filter((s) => s.quantity >= 1).length;
++  const obtained = stickers.filter((s) => s.quantity > 1).length;
+   const missing = totalRegistered - obtained;
+
+   const completionPercentage =
+     totalRegistered === 0 ? 0 : Math.round((obtained / totalRegistered) * 100);
+diff --git a/frontend/src/components/StickerGrid.jsx b/frontend/src/components/StickerGrid.jsx
+index 1a2b3c4..5d6e7f8 100644
+--- a/frontend/src/components/StickerGrid.jsx
++++ b/frontend/src/components/StickerGrid.jsx
+@@ -8,6 +8,9 @@ import { StickerCard } from './StickerCard.jsx';
+ export function StickerGrid({ stickers, onIncrement, onDecrement, onDelete }) {
++  const sortedStickers = [...stickers].sort(
++    (a, b) => a.albumNumber - b.albumNumber,
++  );
++
+   if (stickers.length === 0) {
+     return <p className="empty">Nenhuma figurinha encontrada.</p>;
+   }

@@ -1,7 +1,15 @@
 node_modules/
 dist/
+automation/.env
 .env
 .env.local
 *.log
 .DS_Store
 coverage/
+
+# Relatórios gerados pelo agente (Pipeline Guardian)
+reports/
+
+# Os logs de fixture do agente são código de teste, não log de execução:
+# precisam escapar da regra `*.log` acima.
+!automation/fixtures/logs/*.log

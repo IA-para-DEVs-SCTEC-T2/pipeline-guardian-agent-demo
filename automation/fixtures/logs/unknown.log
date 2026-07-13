@@ -1,0 +1,14 @@
+> copa-figurinhas@1.0.0 ci
+> npm run lint && npm run test && npm run build
+
+Runner do job: ubuntu-22.04 (2 vCPU, 7 GB)
+Iniciando etapa de verificação...
+
+<--- Last few GCs --->
+[1842:0x5f8a1c0]    24831 ms: Mark-Compact 2043.2 (2077.9) -> 2041.8 (2078.4) MB
+
+The process was terminated by signal SIGKILL.
+Exit code: 137
+
+O runner encerrou a etapa antes de produzir saída utilizável.
+Nenhum diagnóstico adicional foi emitido pelo processo.

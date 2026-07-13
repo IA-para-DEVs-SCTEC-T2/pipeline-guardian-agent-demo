@@ -23,8 +23,9 @@ Monorepo com **npm workspaces**:
 
 ```
 copa-figurinhas/
-├── backend/    API REST em Node.js + Express (dados em memória)
-└── frontend/   Interface em React + Vite
+├── backend/      API REST em Node.js + Express (dados em memória)
+├── frontend/     Interface em React + Vite
+└── automation/   Agente Pipeline Guardian (diagnóstico de CI/CD)
 ```
 
 - **JavaScript com ES Modules** (sem TypeScript).
@@ -143,13 +144,63 @@ ou
 
 ## Scripts (raiz)
 
-| Script            | Ação                                                   |
-| ----------------- | ------------------------------------------------------ |
-| `npm run dev`     | Backend + frontend em paralelo                         |
-| `npm run lint`    | ESLint em todo o monorepo                              |
-| `npm run test`    | Testes do backend e do frontend                        |
-| `npm run build`   | Build de produção do frontend                          |
-| `npm run ci`      | `lint` + `test` + `build` (usado no pipeline)          |
+| Script                          | Ação                                                    |
+| ------------------------------- | ------------------------------------------------------- |
+| `npm run dev`                   | Backend + frontend em paralelo                          |
+| `npm run lint`                  | ESLint em todo o monorepo                               |
+| `npm run test`                  | Testes do backend, do frontend e do agente              |
+| `npm run build`                 | Build de produção do frontend                           |
+| `npm run ci`                    | `lint` + `test` + `build` (usado no pipeline)           |
+| `npm run agent:analyze`         | Agente sobre a execução real do pipeline                |
+| `npm run agent:fixture -- test` | Agente sobre um cenário simulado                        |
+
+---
+
+## Agente Pipeline Guardian (`automation/`)
+
+Recebe **metadados do pipeline, logs dos comandos e o diff da Pull Request** e
+produz um diagnóstico estruturado — em JSON e em Markdown.
+
+```bash
+npm run agent:fixture -- test     # cenário simulado
+npm run agent:analyze             # executa o pipeline de verdade e analisa o resultado
+```
+
+Saídas: `reports/diagnosis.json` e `reports/diagnosis.md`.
+
+### Funciona com ou sem chave da OpenAI
+
+| Cenário                                    | Comportamento                                     |
+| ------------------------------------------ | ------------------------------------------------- |
+| `OPENAI_API_KEY` + `OPENAI_MODEL` definidos | Responses API com saída estruturada validada (Zod) |
+| Sem chave, erro de rede ou saída inválida   | **Classificador determinístico** (`usedFallback: true`) |
+
+Em qualquer um dos dois, a saída é válida contra o mesmo schema. O agente
+degrada, não quebra.
+
+### Três garantias
+
+1. **Segredo nenhum sai daqui.** Chaves, `Bearer`, `ghp_`/`github_pat_`, `sk-`,
+   variáveis `PASSWORD`/`SECRET`/`TOKEN`, credenciais em URL e cookies viram
+   `[REDACTED]` **antes** de irem ao modelo, ao disco ou ao relatório.
+2. **O modelo não decide deploy.** Ele descreve a falha; a decisão
+   (`eligible_for_staging`, `blocked`, `requires_human_approval`) é de uma
+   política determinística aplicada **depois**, que sobrescreve qualquer
+   recomendação insegura. Lint, teste, build, permissão, segurança, confiança
+   baixa ou limitação relevante ⇒ `blocked`. Produção ⇒ sempre aprovação humana.
+3. **Evidência não se inventa.** Cada trecho citado é conferido contra o material
+   coletado; o que não existe lá é descartado e declarado como limitação.
+
+### Cenários simulados
+
+`lint`, `test`, `dependency`, `build`, `environment`, `permission`, `security`,
+`unknown` e `success`.
+
+### Configuração
+
+Tudo é opcional — copie `automation/.env.example` para `automation/.env` se quiser
+usar o modelo. O agente **não faz deploy** e **não comenta na PR** sem opt-in
+explícito (`AUTOMATION_ALLOW_PR_COMMENT=true` + `GITHUB_TOKEN`).
 
 ## ⚠️ Armazenamento em memória
 

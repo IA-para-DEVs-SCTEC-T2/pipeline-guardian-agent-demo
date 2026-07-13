@@ -1,0 +1,14 @@
+> @copa-figurinhas/backend@1.0.0 start
+> node src/server.js
+
+[config] carregando variáveis de ambiente...
+[config] missing env: CORS_ORIGIN
+
+ConfigError: CORS_ORIGIN is required but was not provided
+    at loadConfig (/app/backend/src/config.js:14:11)
+    at file:///app/backend/src/server.js:6:16
+
+[config] undefined environment variable: PORT — usando fallback 3001
+[config] o job de staging não injetou o env group `copa-figurinhas-staging`
+
+npm error code 1
