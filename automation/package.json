@@ -8,6 +8,7 @@
   "scripts": {
     "analyze": "node src/analyze-pipeline.mjs",
     "fixture": "node src/analyze-pipeline.mjs --fixture",
+    "ci:diagnose": "node src/ci-diagnose.mjs",
     "test": "vitest run",
     "lint": "eslint ."
   },
