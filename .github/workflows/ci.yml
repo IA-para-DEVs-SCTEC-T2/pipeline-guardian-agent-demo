@@ -240,9 +240,15 @@ jobs:
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
 
-          # Comentários são habilitados somente para PRs do próprio
-          # repositório. PRs de forks não recebem token de escrita.
-          AUTOMATION_ALLOW_PR_COMMENT: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+          # Dia 2: o canal do Discord substitui o comentário automático como
+          # saída principal do diagnóstico. Com 'false', `upsertPullRequestComment`
+          # entra em dry-run: o corpo do comentário ainda é gravado em
+          # `reports/pr-comment.md` (e vai para os artefatos), mas nada é
+          # publicado na Pull Request.
+          #
+          # Para voltar ao comportamento do Dia 1, restaure:
+          #   ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && 'true' || 'false' }}
+          AUTOMATION_ALLOW_PR_COMMENT: "false"
 
           PR_NUMBER: ${{ github.event.pull_request.number }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -295,6 +301,33 @@ jobs:
           path: reports/input/pr.diff
           if-no-files-found: warn
           retention-days: 30
+
+      # ChatOps — transporta o diagnóstico já produzido para o Discord.
+      #
+      # Roda por último de propósito: o Job Summary e os artefatos já foram
+      # publicados quando este step começa. Se a notificação falhar, o
+      # diagnóstico continua acessível — a notificação é um canal a mais, não
+      # a única cópia.
+      #
+      # `continue-on-error: true` durante o laboratório: um webhook mal
+      # configurado ou um backend fora do ar não pode reprovar o pipeline.
+      # Quem decide o resultado do CI continua sendo o job `ci-gate`, a partir
+      # de quality/tests/build — este step não entra nessa conta.
+      - name: Notify Discord (ChatOps)
+        if: ${{ always() && github.event_name == 'pull_request' && hashFiles('reports/diagnosis.json') != '' && vars.CHATOPS_ENDPOINT_URL != '' }}
+        continue-on-error: true
+        env:
+          CHATOPS_ENDPOINT_URL: ${{ vars.CHATOPS_ENDPOINT_URL }}
+          CHATOPS_TARGET: ${{ vars.CHATOPS_TARGET }}
+          CHATOPS_SHARED_SECRET: ${{ secrets.CHATOPS_SHARED_SECRET }}
+          CHATOPS_API_TOKEN: ${{ secrets.CHATOPS_API_TOKEN }}
+
+          # Em Pull Request, `GITHUB_SHA` aponta para o merge commit e
+          # `GITHUB_REF_NAME` vira `<numero>/merge`. O que interessa ao
+          # diagnóstico é o commit e a branch de quem abriu a PR.
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITHUB_HEAD_REF: ${{ github.head_ref }}
+        run: node automation/src/send-chatops-event.mjs
 
   # ---------------------------------------------------------------------
   # ci-gate — resultado final do pipeline.

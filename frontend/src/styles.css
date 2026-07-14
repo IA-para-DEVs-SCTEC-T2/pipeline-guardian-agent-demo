@@ -126,9 +126,12 @@ body {
   box-shadow: var(--shadow);
   margin-bottom: 18px;
 }
-.field { display: flex; flex-direction: column; gap: 6px; }
+.field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .field label { font-size: 13px; font-weight: 600; color: var(--muted); }
 .field input, .field select {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
   border: 1px solid var(--border);
   border-radius: 9px;
   padding: 10px 12px;
@@ -139,7 +142,7 @@ body {
 .field input:focus, .field select:focus { outline: 2px solid var(--green-light); outline-offset: 1px; }
 
 /* Form */
-.sticker-form { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.sticker-form { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; min-width: 0; }
 .field--wide { grid-column: 1 / -1; }
 .form-actions { grid-column: 1 / -1; }
 .form-actions .btn { width: 100%; }

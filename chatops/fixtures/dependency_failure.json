@@ -1,0 +1,41 @@
+{
+  "analysisId": "2b3c4d5e-6f7a-4b8c-9d0e-1f2a3b4c5d6e",
+  "requestId": "8e7d6c5b-4a39-4827-9160-1b2c3d4e5f6a",
+  "repository": "senai/copa-figurinhas",
+  "branch": "chore/atualiza-dependencias",
+  "commitSha": "7d21e9c4f8b3a06d5e1c9a2b4f7e8d0c3a6b5f19",
+  "pipelineStatus": "failed",
+  "summary": "Pipeline falhou em `npm run test`: o módulo `dotenv` não foi encontrado em tempo de execução.",
+  "signal": "dependency:Cannot find module",
+  "failureType": "dependency",
+  "probableCause": "`dotenv` é importado pelo workspace `automation`, mas não está resolvido em `node_modules`. O `package-lock.json` provavelmente não acompanhou a alteração do `package.json`, e o `npm ci` do CI instala apenas o que está no lock.",
+  "evidence": [
+    {
+      "source": "log:test:9",
+      "excerpt": "Error: Cannot find module 'dotenv'\n    at automation/src/analyze-pipeline.mjs:12:1\n    code: 'ERR_MODULE_NOT_FOUND'"
+    },
+    {
+      "source": "command:test",
+      "excerpt": "`npm run test` terminou com exit code 1."
+    },
+    {
+      "source": "diff:files",
+      "excerpt": "Arquivos alterados na Pull Request: automation/package.json (+1/-1)."
+    }
+  ],
+  "impact": "Pipeline interrompido em: npm run test. Nenhum teste do workspace `automation` chegou a executar: a suíte falha no import, antes do primeiro caso.",
+  "riskLevel": "medium",
+  "confidence": "high",
+  "nextSteps": [
+    "Rodar `npm install` na raiz e versionar o `package-lock.json` atualizado.",
+    "Confirmar que `dotenv` está em `dependencies` do workspace `automation`, e não apenas em `devDependencies`.",
+    "Reproduzir com `npm ci && npm run test` — `npm ci` é o que o CI executa, e ele ignora o `package.json` quando o lock diverge."
+  ],
+  "deployDecision": "blocked",
+  "requiresHumanApproval": true,
+  "limitations": [
+    "Diagnóstico gerado pelo classificador determinístico, por correspondência de padrões nos logs."
+  ],
+  "usedFallback": true,
+  "generatedAt": "2026-07-14T13:11:47.902Z"
+}

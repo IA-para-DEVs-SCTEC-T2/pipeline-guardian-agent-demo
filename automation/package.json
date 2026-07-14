@@ -9,6 +9,8 @@
     "analyze": "node src/analyze-pipeline.mjs",
     "fixture": "node src/analyze-pipeline.mjs --fixture",
     "ci:diagnose": "node src/ci-diagnose.mjs",
+    "deploy:assess": "node src/deploy-assessment.mjs",
+    "deploy:manifest": "node src/deploy-assessment.mjs --manifest",
     "test": "vitest run",
     "lint": "eslint ."
   },
