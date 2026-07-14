@@ -1,6 +1,7 @@
 node_modules/
 dist/
 automation/.env
+chatops/.env
 .env
 .env.local
 *.log
@@ -13,3 +14,10 @@ reports/
 # Os logs de fixture do agente são código de teste, não log de execução:
 # precisam escapar da regra `*.log` acima.
 !automation/fixtures/logs/*.log
+
+# ChatOps (FastAPI). `chatops/.env` já cai na regra `.env` acima — é lá que
+# ficam o segredo do HMAC e as URLs dos webhooks do Discord.
+chatops/.venv/
+__pycache__/
+.pytest_cache/
+*.pyc
