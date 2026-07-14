@@ -1,0 +1,41 @@
+{
+  "analysisId": "1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d",
+  "requestId": "9f8e7d6c-5b4a-4938-9271-0a1b2c3d4e5f",
+  "repository": "senai/copa-figurinhas",
+  "branch": "feat/ordenar-figurinhas",
+  "commitSha": "c0f4a17b93e2d5486ab1e77c2d9f4b6a0e3c81df",
+  "pipelineStatus": "failed",
+  "summary": "Pipeline falhou em `npm run test`: a regra `duplicateCopies` passou a contar a figurinha original como repetida.",
+  "signal": "test:AssertionError",
+  "failureType": "test",
+  "probableCause": "A alteração em `backend/src/services/report.js` mudou o cálculo de `duplicateCopies`: o teste esperava `quantity - 1` e recebeu `quantity`. A figurinha colada no álbum passou a ser contada como repetida.",
+  "evidence": [
+    {
+      "source": "log:test:17",
+      "excerpt": "FAIL test/report.test.js > duplicateCopies > retorna quantity - 1 quando há repetidas\nAssertionError: expected 3 to be 2 // Object.is equality"
+    },
+    {
+      "source": "command:test",
+      "excerpt": "`npm run test` terminou com exit code 1."
+    },
+    {
+      "source": "diff:files",
+      "excerpt": "Arquivos alterados na Pull Request: backend/src/services/report.js (+1/-1)."
+    }
+  ],
+  "impact": "Pipeline interrompido em: npm run test. O relatório do álbum passa a exibir uma repetida a mais por figurinha. A entrega desta Pull Request fica bloqueada até a correção.",
+  "riskLevel": "medium",
+  "confidence": "high",
+  "nextSteps": [
+    "Reproduzir com `npm run test -w backend` localmente.",
+    "Revisar `duplicateCopies` em `backend/src/services/report.js`: o retorno deve ser `quantity - 1`, nunca `quantity`.",
+    "Corrigir o código ou o teste, conforme qual dos dois estiver errado."
+  ],
+  "deployDecision": "blocked",
+  "requiresHumanApproval": true,
+  "limitations": [
+    "Diagnóstico gerado pelo classificador determinístico, por correspondência de padrões nos logs."
+  ],
+  "usedFallback": true,
+  "generatedAt": "2026-07-14T13:05:22.481Z"
+}
