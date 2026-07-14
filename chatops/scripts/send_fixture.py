@@ -45,8 +45,33 @@ def load_env_file(path: Path) -> None:
         os.environ.setdefault(key.strip(), value.strip())
 
 
+def resolve_repository(cli_value: str | None, diagnosis: dict) -> str:
+    """Decide qual repositório o payload alega, na ordem: ``--repository``, ``ALLOWED_REPOSITORY``, fixture.
+
+    No CI, o `repository` vem de ``GITHUB_REPOSITORY`` — o nome real do repositório.
+    A fixture traz um nome de demonstração, que só passa no allowlist do backend por
+    coincidência. Cair no ``ALLOWED_REPOSITORY`` do ambiente faz o ensaio local exercitar
+    o mesmo valor que o CI enviaria, em vez de um que concorda consigo mesmo.
+
+    Isto não afrouxa nada: quem decide continua sendo o allowlist do FastAPI. Um valor
+    fora dele é rejeitado com 403 — que é exatamente o que se quer poder observar.
+    """
+    if cli_value:
+        return cli_value
+
+    allowed = os.environ.get("ALLOWED_REPOSITORY", "").strip()
+    if allowed:
+        return allowed
+
+    return diagnosis["repository"]
+
+
 def build_payload(diagnosis: dict, target: str) -> dict:
-    """Envelope de transporte — o mesmo que o script Node monta no CI."""
+    """Envelope de transporte — o mesmo que o script Node monta no CI.
+
+    O `repository` do envelope sai do próprio `diagnosis`: os dois são o mesmo valor por
+    construção, e não há como um divergir do outro.
+    """
     repository = diagnosis["repository"]
     run_id = os.environ.get("GITHUB_RUN_ID", "0")
     server = os.environ.get("GITHUB_SERVER_URL", "https://github.com")
@@ -73,6 +98,13 @@ def main() -> int:
         default=os.environ.get("CHATOPS_ENDPOINT_URL", "http://127.0.0.1:8000"),
         help="Base do ChatOps (padrão: http://127.0.0.1:8000).",
     )
+    parser.add_argument(
+        "--repository",
+        help=(
+            "Repositório que o evento alega, como o CI faria via GITHUB_REPOSITORY. "
+            "Padrão: ALLOWED_REPOSITORY do ambiente; se ausente, o valor da fixture."
+        ),
+    )
     args = parser.parse_args()
 
     load_env_file(REPO_ROOT / "chatops" / ".env")
@@ -84,6 +116,12 @@ def main() -> int:
         return 2
 
     diagnosis = json.loads((FIXTURES_DIR / f"{args.scenario}.json").read_text(encoding="utf-8"))
+
+    # Sobrescreve antes de montar e assinar: o envelope e o diagnóstico embutido têm de
+    # contar a mesma história — o backend confere o envelope, mas o Discord mostra o
+    # diagnóstico, e um par divergente seria uma mensagem mentindo sobre a própria origem.
+    diagnosis["repository"] = resolve_repository(args.repository, diagnosis)
+
     payload = build_payload(diagnosis, args.target)
 
     # Assina os bytes que serão enviados — não o dict, não uma reserialização.
