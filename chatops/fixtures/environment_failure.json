@@ -1,0 +1,41 @@
+{
+  "analysisId": "3c4d5e6f-7a8b-4c9d-8e0f-2a3b4c5d6e7f",
+  "requestId": "7d6c5b4a-3928-4716-9059-2c3d4e5f6a7b",
+  "repository": "senai/copa-figurinhas",
+  "branch": "feat/relatorio-compartilhavel",
+  "commitSha": "b58a3f0d2c7e91486fa4d3b0c85e2917fd6a4c30",
+  "pipelineStatus": "partial",
+  "summary": "O build do frontend parou antes de concluir: a variável obrigatória `VITE_API_URL` não foi fornecida ao ambiente do job.",
+  "signal": "environment:is required but was not provided",
+  "failureType": "environment",
+  "probableCause": "`frontend/.env.example` declara `VITE_API_URL` como obrigatória, mas a variável não está configurada no ambiente do GitHub Actions. É configuração do ambiente, não defeito no código da Pull Request.",
+  "evidence": [
+    {
+      "source": "log:build:6",
+      "excerpt": "Error: VITE_API_URL is required but was not provided.\n    at frontend/src/api.js:4:9"
+    },
+    {
+      "source": "command:build",
+      "excerpt": "`npm run build` não chegou a concluir: o job terminou sem exit code."
+    },
+    {
+      "source": "diff:files",
+      "excerpt": "Arquivos alterados na Pull Request: frontend/src/api.js (+3/-1), frontend/.env.example (+1/-0)."
+    }
+  ],
+  "impact": "O build do frontend não produziu artefato. O código da Pull Request não foi invalidado: quem falhou foi a configuração do ambiente, e a mesma revisão passa localmente com a variável definida.",
+  "riskLevel": "medium",
+  "confidence": "medium",
+  "nextSteps": [
+    "Definir `VITE_API_URL` nas variáveis do repositório (Settings → Secrets and variables → Actions → Variables).",
+    "Expor a variável ao step de build no `ci.yml`.",
+    "Reexecutar o workflow: nada no código precisa mudar."
+  ],
+  "deployDecision": "requires_human_approval",
+  "requiresHumanApproval": true,
+  "limitations": [
+    "Diagnóstico gerado pelo classificador determinístico, por correspondência de padrões nos logs."
+  ],
+  "usedFallback": true,
+  "generatedAt": "2026-07-14T13:18:03.157Z"
+}

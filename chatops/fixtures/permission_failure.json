@@ -1,0 +1,41 @@
+{
+  "analysisId": "4d5e6f7a-8b9c-4d0e-9f1a-3b4c5d6e7f80",
+  "requestId": "6c5b4a39-2817-4605-8948-3d4e5f6a7b8c",
+  "repository": "senai/copa-figurinhas",
+  "branch": "ci/publica-diagnostico",
+  "commitSha": "e91c47ab08d3f625b7ac1e0d9482f5b63cd7a014",
+  "pipelineStatus": "failed",
+  "summary": "Pipeline falhou ao publicar o artefato: o token do workflow recebeu 403 Forbidden do registro.",
+  "signal": "permission:403 Forbidden",
+  "failureType": "permission",
+  "probableCause": "O `GITHUB_TOKEN` do job não tem o escopo necessário para escrever no destino. Falta declarar a permissão no bloco `permissions:` do job, ou a execução vem de uma Pull Request de fork, que só recebe token de leitura.",
+  "evidence": [
+    {
+      "source": "log:build:23",
+      "excerpt": "npm error code E403\nnpm error 403 Forbidden - PUT https://registry.example/copa-figurinhas\nnpm error 403 In most cases, you or one of your dependencies are requesting a package version that is forbidden."
+    },
+    {
+      "source": "command:build",
+      "excerpt": "`npm run build` terminou com exit code 1."
+    },
+    {
+      "source": "diff:files",
+      "excerpt": "Arquivos alterados na Pull Request: .github/workflows/ci.yml (+6/-2)."
+    }
+  ],
+  "impact": "Pipeline interrompido em: npm run build. Nenhum artefato foi publicado. Falha de permissão não se resolve reexecutando o workflow: o token continuará sem o escopo.",
+  "riskLevel": "high",
+  "confidence": "high",
+  "nextSteps": [
+    "Conferir o bloco `permissions:` do job no `.github/workflows/ci.yml` e conceder o escopo mínimo necessário.",
+    "Se a execução vem de uma Pull Request de fork, tratar como esperado: forks não recebem token de escrita.",
+    "Não contornar com um Personal Access Token de escopo amplo no workflow."
+  ],
+  "deployDecision": "blocked",
+  "requiresHumanApproval": true,
+  "limitations": [
+    "Diagnóstico gerado pelo classificador determinístico, por correspondência de padrões nos logs."
+  ],
+  "usedFallback": true,
+  "generatedAt": "2026-07-14T13:24:39.610Z"
+}
