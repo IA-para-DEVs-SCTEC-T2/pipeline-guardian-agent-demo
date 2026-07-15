@@ -49,6 +49,31 @@ para quem for evoluí-lo:
   classificador) faria o agente reprovar um pipeline verde. Sem comando falhando
   não há falha a classificar.
 
+## Deploy assistido — `deploy-assessment.mjs` + `deploy-assisted.yml`
+
+Demonstração de promoção assistida: o agente **avalia**, a política **decide**, a
+pessoa **aprova**. Reusa o Pipeline Guardian inteiro (coleta, análise, política);
+o que acrescenta é o recorte de deploy.
+
+- **Dois vereditos, dois campos.** `agentRecommendation` (`eligible_for_staging`,
+  `technically_ready`, `not_ready`) é a leitura de prontidão **técnica** do
+  agente. `policyDecision` (`eligible_for_staging`, `requires_human_approval`,
+  `blocked`) é o que a política **autoriza promover**. Nunca colapse os dois: o
+  agente não pode emitir `requires_human_approval`, e production nunca recebe
+  `eligible_for_staging` dele.
+- **A política sobrescreve, sempre.** Ela lê exit codes, segredos e limitações —
+  nunca a recomendação do agente. Um modelo que descreva um pipeline vermelho
+  como saudável produz uma recomendação insegura e ainda assim leva `blocked`.
+  A discordância vira `policyOverrodeAgent: true` no relatório.
+- **`policyOverrodeAgent` compara permissividade, não igualdade.** Os dois campos
+  usam vocabulários diferentes: em production, `technically_ready` +
+  `requires_human_approval` é **concordância**. Só é sobrescrita quando o agente
+  pediu mais do que a política concedeu.
+- **O deploy é simulado.** `--manifest` grava `deployment-manifest.json` com
+  `status: simulated` e **revalida a decisão** antes de escrever — o `if:` do
+  workflow não é a única barreira. Quem segura o job de production até a
+  aprovação é o **GitHub Environment** (required reviewers), não o código.
+
 ## Comandos principais
 
 ```bash
@@ -65,6 +90,9 @@ npm run ci                   # lint + test + build
 npm run agent:analyze        # agente sobre a execução real (roda o pipeline e lê o working tree)
 npm run agent:fixture -- test  # agente sobre um cenário simulado (lint, test, dependency,
                                # build, environment, permission, security, unknown, success)
+
+npm run agent:deploy-assess    # avaliação de prontidão de deploy (lê reports/input/*.log)
+npm run agent:deploy-manifest  # deploy SIMULADO a partir da avaliação
 ```
 
 Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
