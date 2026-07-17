@@ -4,7 +4,7 @@
  * @returns {number}
  */
 export function duplicateCopies(quantity) {
-  return Math.max(quantity - 1, 0);
+  return quantity;
 }
 
 /**
