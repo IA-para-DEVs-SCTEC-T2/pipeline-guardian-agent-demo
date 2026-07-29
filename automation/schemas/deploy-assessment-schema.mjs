@@ -27,11 +27,18 @@ export const AGENT_RECOMMENDATIONS = ['eligible_for_staging', 'technically_ready
 
 export const GATE_STATUSES = ['passed', 'failed', 'skipped'];
 
-/** Resultado de cada gate técnico, derivado do exit code — não de opinião. */
+/**
+ * Resultado de cada gate técnico, derivado do exit code — não de opinião.
+ *
+ * `docker` entrou junto com o deployment em container: uma release que passa em
+ * lint, teste e build mas não produz imagem não está pronta para ser
+ * implantada. Gate não observado é `skipped`, nunca `passed`.
+ */
 export const gateResultsSchema = z.object({
   lint: z.enum(GATE_STATUSES),
   test: z.enum(GATE_STATUSES),
   build: z.enum(GATE_STATUSES),
+  docker: z.enum(GATE_STATUSES),
 });
 
 /**

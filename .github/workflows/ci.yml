@@ -153,6 +153,44 @@ jobs:
           retention-days: 14
 
   # ---------------------------------------------------------------------
+  # docker-build — constrói a imagem de produção SEM publicar em lugar
+  # nenhum. É o gate que pega o que lint, teste e build não pegam: um
+  # Dockerfile quebrado, uma dependência que não instala na imagem, um
+  # `frontend/dist` que não é gerado.
+  #
+  # Não usa credencial de registry nem do Railway: `docker build` local,
+  # imagem descartada com o runner.
+  # ---------------------------------------------------------------------
+  docker-build:
+    name: Docker build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+
+      # `--progress=plain` mantém o log em texto puro — é ele que vai para o
+      # Job Summary e para o Pipeline Guardian.
+      - name: Build da imagem (sem push)
+        shell: bash
+        run: |
+          mkdir -p reports
+          set -o pipefail
+          docker build --progress=plain -t copa-figurinhas:ci . 2>&1 | tee reports/docker.log
+
+      - name: Upload docker log
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: docker-log
+          path: reports/docker.log
+          if-no-files-found: warn
+          retention-days: 14
+
+  # ---------------------------------------------------------------------
   # diagnose — executa o Pipeline Guardian mesmo quando lint, testes ou
   # build falham.
   #
@@ -165,6 +203,7 @@ jobs:
       - quality
       - tests
       - build
+      - docker-build
 
     if: ${{ always() }}
     runs-on: ubuntu-latest
@@ -220,6 +259,13 @@ jobs:
           name: build-log
           path: reports/input
 
+      - name: Download docker log
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: docker-log
+          path: reports/input
+
       - name: Collect Pull Request diff
         if: ${{ github.event_name == 'pull_request' }}
         shell: bash
@@ -236,9 +282,23 @@ jobs:
           # Token temporário do workflow.
           GITHUB_TOKEN: ${{ github.token }}
 
-          # Opcionais. Sem eles, o agente usa fallback determinístico.
+          # A chave é o que liga o modelo — e só este job a recebe. `quality`,
+          # `tests`, `build`, `docker-build` e `ci-gate` não a veem: nenhum
+          # deles chama a OpenAI, e um secret entregue a quem não precisa é
+          # superfície de exposição de graça.
+          #
+          # Sem a chave (fork, secret não cadastrado), o agente usa o
+          # classificador determinístico e o diagnóstico continua saindo.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          #
+          # As três abaixo NÃO são secrets: são configuração. Ficam vazias
+          # quando a variável não existe no repositório, e é `openai-config.mjs`
+          # quem resolve o padrão (`gpt-5-mini`, `low`, `2000`). O padrão não é
+          # repetido aqui de propósito — dois lugares com o mesmo padrão viram
+          # dois padrões diferentes na primeira vez que um deles mudar.
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT }}
+          OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS }}
 
           # Dia 2: o canal do Discord substitui o comentário automático como
           # saída principal do diagnóstico. Com 'false', `upsertPullRequestComment`
@@ -263,6 +323,7 @@ jobs:
           QUALITY_RESULT: ${{ needs.quality.result }}
           TESTS_RESULT: ${{ needs.tests.result }}
           BUILD_RESULT: ${{ needs.build.result }}
+          DOCKER_RESULT: ${{ needs.docker-build.result }}
 
         run: node automation/src/ci-diagnose.mjs
 
@@ -341,6 +402,7 @@ jobs:
       - quality
       - tests
       - build
+      - docker-build
       - diagnose
 
     if: ${{ always() }}
@@ -351,14 +413,16 @@ jobs:
       - name: Check required jobs
         shell: bash
         run: |
-          echo "quality:  ${{ needs.quality.result }}"
-          echo "tests:    ${{ needs.tests.result }}"
-          echo "build:    ${{ needs.build.result }}"
-          echo "diagnose: ${{ needs.diagnose.result }} (informativo)"
+          echo "quality:      ${{ needs.quality.result }}"
+          echo "tests:        ${{ needs.tests.result }}"
+          echo "build:        ${{ needs.build.result }}"
+          echo "docker-build: ${{ needs.docker-build.result }}"
+          echo "diagnose:     ${{ needs.diagnose.result }} (informativo)"
 
           if [ "${{ needs.quality.result }}" != "success" ] || \
              [ "${{ needs.tests.result }}" != "success" ] || \
-             [ "${{ needs.build.result }}" != "success" ]; then
+             [ "${{ needs.build.result }}" != "success" ] || \
+             [ "${{ needs.docker-build.result }}" != "success" ]; then
             echo
             echo "CI Gate: falhou."
             echo "Pelo menos um job técnico obrigatório não teve sucesso."

@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { MODEL_ERROR_CATEGORIES } from '../src/openai-config.mjs';
+
 export const PIPELINE_STATUSES = ['success', 'failed', 'partial'];
 
 export const FAILURE_TYPES = [
@@ -25,6 +27,37 @@ export const evidenceSchema = z.object({
 });
 
 /**
+ * Consumo de tokens da chamada. Cada campo é anulável: um detalhe de
+ * observabilidade que o SDK não informou não pode invalidar o diagnóstico.
+ */
+export const modelUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative().nullable(),
+  outputTokens: z.number().int().nonnegative().nullable(),
+  reasoningTokens: z.number().int().nonnegative().nullable(),
+  totalTokens: z.number().int().nonnegative().nullable(),
+});
+
+/**
+ * Metadados observáveis da chamada ao modelo — os mesmos nos dois diagnósticos.
+ *
+ * São **opcionais** para que relatórios gerados antes desta versão continuem
+ * válidos, e não entram em nenhuma decisão: quem decide CI é o exit code dos
+ * comandos, quem decide CD é o smoke test. Isto aqui é conta de luz, não voto.
+ *
+ * Nada aqui é sensível: sem chave, sem header, sem corpo de requisição, sem o
+ * conteúdo enviado ao modelo. `modelErrorCategory` nomeia a falha da chamada
+ * sem carregar a mensagem bruta que a produziu.
+ */
+export const modelCallFields = {
+  modelProvider: z.string().min(1).optional(),
+  model: z.string().min(1).optional(),
+  modelResponseId: z.string().min(1).nullable().optional(),
+  modelLatencyMs: z.number().int().nonnegative().nullable().optional(),
+  modelUsage: modelUsageSchema.nullable().optional(),
+  modelErrorCategory: z.enum(MODEL_ERROR_CATEGORIES).nullable().optional(),
+};
+
+/**
  * Diagnóstico completo. A ordem das chaves é a ordem do relatório.
  */
 export const diagnosisSchema = z.object({
@@ -47,6 +80,7 @@ export const diagnosisSchema = z.object({
   requiresHumanApproval: z.boolean(),
   limitations: z.array(z.string()),
   usedFallback: z.boolean(),
+  ...modelCallFields,
   generatedAt: z.string().datetime(),
 });
 

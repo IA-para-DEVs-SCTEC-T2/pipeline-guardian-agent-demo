@@ -6,9 +6,9 @@
  *   → analisar (modelo OU fallback determinístico) → aplicar política de deploy
  *   → validar no schema → gravar reports/diagnosis.{json,md}
  *
- * O modelo é opcional: sem `OPENAI_API_KEY`/`OPENAI_MODEL`, com erro de rede ou
- * com saída inválida, o agente cai no classificador determinístico e ainda
- * produz um diagnóstico válido. A decisão de deploy nunca é do modelo.
+ * O modelo é opcional: sem `OPENAI_API_KEY`, com erro de rede ou com saída
+ * inválida, o agente cai no classificador determinístico e ainda produz um
+ * diagnóstico válido. A decisão de deploy nunca é do modelo.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,6 +23,16 @@ import { diagnosisSchema, modelDiagnosisSchema } from '../schemas/diagnosis-sche
 import { buildEvidenceList, collectContext } from './collect-context.mjs';
 import { applyDeployPolicy } from './deploy-policy.mjs';
 import { buildDeterministicDiagnosis, classifyFailure } from './deterministic-classifier.mjs';
+import { groundEvidenceAgainst } from './ground-evidence.mjs';
+import { callStructuredModel, classifyModelError, createOpenAIClient } from './openai-client.mjs';
+import {
+  PAYLOAD_LIMITS,
+  TRUNCATION_LIMITATION,
+  canUseModel,
+  capText,
+  emptyModelCallMetadata,
+  resolveOpenAIConfig,
+} from './openai-config.mjs';
 import { redactSecrets, redactSecretsDeep } from './redact-secrets.mjs';
 import { renderMarkdown } from './render-report.mjs';
 import { SCENARIOS, simulateFailure, simulateSuccess, diffFiles } from './simulate-failure.mjs';
@@ -35,27 +45,50 @@ const PROMPT_PATH = join(AUTOMATION_ROOT, 'prompts', 'pipeline-analysis.md');
 
 const DEFAULT_COMMANDS = ['npm run lint', 'npm run test', 'npm run build'];
 const COMMAND_TIMEOUT_MS = 300_000;
-const DEFAULT_MODEL_TIMEOUT_MS = 45_000;
+
+// `canUseModel` vive em `openai-config.mjs` e é reexportado aqui para quem já
+// importava daqui. A regra mudou de lugar, não de dono.
+export { canUseModel };
 
 /**
- * O agente pode usar o modelo? Exige as duas variáveis; sem qualquer uma delas,
- * o caminho é o fallback.
- *
- * @param {NodeJS.ProcessEnv} env
- * @returns {boolean}
- */
-export function canUseModel(env = process.env) {
-  return Boolean(env.OPENAI_API_KEY) && Boolean(env.OPENAI_MODEL);
-}
-
-/**
- * Monta o payload enviado ao modelo: já mascarado e restrito aos trechos
- * relevantes. O modelo não recebe o repositório inteiro nem logs completos.
+ * Monta o payload enviado ao modelo: já mascarado, restrito aos trechos
+ * relevantes e limitado em tamanho. O modelo não recebe o repositório inteiro
+ * nem logs completos.
  *
  * @param {object} input
- * @returns {string} JSON
+ * @returns {{ payload: string, limitations: string[] }}
  */
-export function buildModelPayload({ context, classification }) {
+export function buildModelRequest({ context, classification }) {
+  const limitations = [];
+
+  const commands = context.commands.map((command) => {
+    // Só o log de quem falhou vai ao modelo — quem passou não tem o que explicar.
+    if (command.status !== 'failed') {
+      return {
+        name: command.name,
+        command: command.command,
+        exitCode: command.exitCode,
+        status: command.status,
+      };
+    }
+
+    const log = capText(command.log, PAYLOAD_LIMITS.maxLogChars);
+    if (log.truncated) limitations.push(TRUNCATION_LIMITATION);
+
+    return {
+      name: command.name,
+      command: command.command,
+      exitCode: command.exitCode,
+      status: command.status,
+      log: log.text,
+    };
+  });
+
+  const patch = capText(context.diff.patch, PAYLOAD_LIMITS.maxDiffChars);
+  if (patch.truncated) {
+    limitations.push('Parte do diff da Pull Request foi truncada antes da análise.');
+  }
+
   const payload = {
     pipeline: {
       repository: context.metadata.repository,
@@ -65,16 +98,10 @@ export function buildModelPayload({ context, classification }) {
       trigger: context.metadata.trigger,
       pipelineStatus: context.results.pipelineStatus,
     },
-    commands: context.commands.map((command) => ({
-      name: command.name,
-      command: command.command,
-      exitCode: command.exitCode,
-      status: command.status,
-      log: command.status === 'failed' ? command.log : undefined,
-    })),
+    commands,
     pullRequestDiff: {
       files: context.diff.files,
-      patch: context.diff.patch,
+      patch: patch.text,
     },
     deterministicClassifier: {
       failureType: classification.failureType,
@@ -86,38 +113,51 @@ export function buildModelPayload({ context, classification }) {
     collectedLimitations: context.limitations,
   };
 
-  return redactSecrets(JSON.stringify(payload, null, 2));
+  // A redação roda sobre o texto completo; o corte final só remove conteúdo.
+  const serialized = redactSecrets(JSON.stringify(payload, null, 2));
+  const capped = capText(serialized, PAYLOAD_LIMITS.maxTotalChars);
+  if (capped.truncated) limitations.push(TRUNCATION_LIMITATION);
+
+  return { payload: capped.text, limitations: unique(limitations) };
+}
+
+/**
+ * Só o texto do payload. Mantida para quem já usava esta forma.
+ *
+ * @param {object} input
+ * @returns {string} JSON
+ */
+export function buildModelPayload({ context, classification }) {
+  return buildModelRequest({ context, classification }).payload;
 }
 
 /**
  * Chama a Responses API com saída estruturada validada por Zod.
  *
  * @param {object} input
- * @returns {Promise<object>} objeto conforme `modelDiagnosisSchema`
+ * @returns {Promise<{ modelDiagnosis: object, metadata: object, limitations: string[] }>}
  */
-export async function analyzeWithModel({ context, classification, env = process.env, client = null }) {
-  const openai = client ?? (await createClient(env));
-  const instructions = readFileSync(PROMPT_PATH, 'utf8');
-  const { zodTextFormat } = await import('openai/helpers/zod');
+export async function analyzeWithModel({
+  context,
+  classification,
+  env = process.env,
+  client = null,
+  config = null,
+}) {
+  const resolved = config ?? resolveOpenAIConfig(env);
+  const openai = client ?? (await createOpenAIClient({ env, config: resolved }));
+  const { payload, limitations } = buildModelRequest({ context, classification });
 
-  const response = await openai.responses.parse({
-    model: env.OPENAI_MODEL,
-    instructions,
-    input: [{ role: 'user', content: buildModelPayload({ context, classification }) }],
-    text: { format: zodTextFormat(modelDiagnosisSchema, 'pipeline_diagnosis') },
+  const { parsed, metadata } = await callStructuredModel({
+    client: openai,
+    config: resolved,
+    instructions: readFileSync(PROMPT_PATH, 'utf8'),
+    input: payload,
+    schema: modelDiagnosisSchema,
+    schemaName: 'pipeline_diagnosis',
   });
 
-  if (response.status === 'incomplete') {
-    throw new Error(`resposta incompleta: ${response.incomplete_details?.reason ?? 'motivo desconhecido'}`);
-  }
-
-  const parsed = response.output_parsed;
-  if (!parsed) {
-    throw new Error('resposta do modelo sem saída estruturada');
-  }
-
-  // Valida de novo do nosso lado: nunca confiar na forma do que veio da rede.
-  return modelDiagnosisSchema.parse(parsed);
+  return { modelDiagnosis: parsed, metadata, limitations };
 }
 
 /**
@@ -162,26 +202,42 @@ export async function analyzePipeline({
     diffPatch: context.diff.patch,
   });
 
+  const config = resolveOpenAIConfig(env);
+
   let core = deterministic;
   let usedFallback = true;
-  let fallbackNote = 'Sem `OPENAI_API_KEY`/`OPENAI_MODEL`: diagnóstico produzido pelo classificador determinístico.';
+  let modelCall = emptyModelCallMetadata(config);
+  let fallbackNote = 'Sem `OPENAI_API_KEY`: diagnóstico produzido pelo classificador determinístico.';
+  let payloadLimitations = [];
 
-  if (canUseModel(env)) {
+  if (config.enabled) {
     try {
-      const modelDiagnosis = await analyzeWithModel({ context, classification, env, client });
-      core = mergeModelDiagnosis({ modelDiagnosis, deterministic, context });
+      const result = await analyzeWithModel({ context, classification, env, client, config });
+      core = mergeModelDiagnosis({ modelDiagnosis: result.modelDiagnosis, deterministic, context });
+      payloadLimitations = result.limitations;
+      modelCall = result.metadata;
       usedFallback = false;
       fallbackNote = null;
     } catch (error) {
-      // Erro de rede, chave inválida, recusa ou saída fora do schema: o agente
-      // não pode ficar sem resposta — cai no determinístico.
-      fallbackNote = `Falha na análise com modelo (${redactSecrets(String(error.message))}): usado o classificador determinístico.`;
+      // Erro de rede, chave inválida, timeout, recusa ou saída fora do schema:
+      // o agente não pode ficar sem resposta — cai no determinístico. Só a
+      // categoria da falha é publicada; a mensagem bruta do SDK, nunca.
+      const category = classifyModelError(error);
+      fallbackNote =
+        `Falha na análise com modelo (categoria: \`${category}\`): a análise com o modelo não ` +
+        'foi concluída; foi utilizado o classificador determinístico.';
+      modelCall = emptyModelCallMetadata(config, category);
       core = deterministic;
       usedFallback = true;
     }
   }
 
-  const limitations = unique([...core.limitations, ...(fallbackNote ? [fallbackNote] : [])]);
+  const limitations = unique([
+    ...core.limitations,
+    ...payloadLimitations,
+    ...config.notes,
+    ...(fallbackNote ? [fallbackNote] : []),
+  ]);
 
   const policy = applyDeployPolicy({
     diagnosis: { ...core, limitations },
@@ -211,6 +267,7 @@ export async function analyzePipeline({
       requiresHumanApproval: policy.requiresHumanApproval,
       limitations,
       usedFallback,
+      ...modelCall,
       generatedAt: now().toISOString(),
     }),
   );
@@ -263,22 +320,15 @@ export function mergeModelDiagnosis({ modelDiagnosis, deterministic, context }) 
  * Mantém apenas as evidências cujo trecho existe de fato no material coletado.
  * É o antídoto contra citação inventada.
  *
+ * A regra vive em `ground-evidence.mjs` e é compartilhada com o diagnóstico de
+ * deployment; aqui só se aplica ao `textSources` deste contexto.
+ *
  * @param {Array<{source: string, excerpt: string}>} evidence
  * @param {object} context
  * @returns {{ evidence: Array<object>, grounded: boolean }}
  */
 export function groundEvidence(evidence = [], context) {
-  const haystack = normalize(
-    context.textSources.map((entry) => entry.content).join('\n'),
-  );
-
-  const kept = evidence.filter((item) => {
-    const needle = normalize(item.excerpt);
-    if (needle.length < 12) return false;
-    return haystack.includes(needle);
-  });
-
-  return { evidence: kept, grounded: kept.length > 0 };
+  return groundEvidenceAgainst(evidence, context.textSources);
 }
 
 /**
@@ -439,6 +489,9 @@ async function main() {
     `  decisão ......... ${diagnosis.deployDecision}`,
     `  aprovação ....... ${diagnosis.requiresHumanApproval ? 'humana necessária' : 'não necessária'}`,
     `  fallback ........ ${diagnosis.usedFallback}`,
+    `  modelo .......... ${diagnosis.model ?? 'n/d'}${diagnosis.modelErrorCategory ? ` (falha: ${diagnosis.modelErrorCategory})` : ''}`,
+    `  latência ........ ${diagnosis.modelLatencyMs === null || diagnosis.modelLatencyMs === undefined ? 'n/d' : `${diagnosis.modelLatencyMs} ms`}`,
+    `  tokens .......... ${diagnosis.modelUsage?.totalTokens ?? 'n/d'}`,
     '',
     '  política:',
     ...policy.reasons.map((reason) => `    - ${reason}`),
@@ -458,21 +511,8 @@ async function main() {
 /* Auxiliares                                                                 */
 /* ------------------------------------------------------------------------- */
 
-async function createClient(env) {
-  const { default: OpenAI } = await import('openai');
-  return new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
-    timeout: Number(env.OPENAI_TIMEOUT_MS ?? DEFAULT_MODEL_TIMEOUT_MS),
-    maxRetries: 1,
-  });
-}
-
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
-}
-
-function normalize(text) {
-  return String(text).replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function commandName(command) {

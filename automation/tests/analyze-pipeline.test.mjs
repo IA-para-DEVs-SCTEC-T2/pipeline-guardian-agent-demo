@@ -4,22 +4,30 @@ import { join } from 'node:path';
 
 import { afterEach, describe, it, expect } from 'vitest';
 
-import { analyzePipeline, canUseModel, buildModelPayload, writeReports } from '../src/analyze-pipeline.mjs';
+import {
+  analyzePipeline,
+  buildModelPayload,
+  buildModelRequest,
+  canUseModel,
+  writeReports,
+} from '../src/analyze-pipeline.mjs';
 import { collectContext } from '../src/collect-context.mjs';
 import { classifyFailure } from '../src/deterministic-classifier.mjs';
+import { PAYLOAD_LIMITS } from '../src/openai-config.mjs';
 import { diagnosisSchema } from '../schemas/diagnosis-schema.mjs';
 import { simulateFailure, simulateSuccess } from '../src/simulate-failure.mjs';
 
 const NO_KEY_ENV = {};
-const MODEL_ENV = { OPENAI_API_KEY: 'sk-test-0123456789abcdef', OPENAI_MODEL: 'gpt-4.1-mini' };
+/** Só a chave: `OPENAI_MODEL` é opcional e o padrão é `gpt-5-mini`. */
+const MODEL_ENV = { OPENAI_API_KEY: 'sk-test-0123456789abcdef' };
 
 /** Cliente OpenAI falso: devolve o que o teste mandar, sem tocar a rede. */
-function fakeClient(output, { throws = null } = {}) {
+function fakeClient(output, { throws = null, response = null } = {}) {
   return {
     responses: {
       parse: async () => {
         if (throws) throw throws;
-        return { status: 'completed', output_parsed: output };
+        return response ?? { status: 'completed', output_parsed: output };
       },
     },
   };
@@ -56,10 +64,10 @@ function tempOutDir() {
 }
 
 describe('canUseModel', () => {
-  it('exige chave E modelo', () => {
+  it('exige apenas a chave — o modelo tem padrão', () => {
     expect(canUseModel({})).toBe(false);
-    expect(canUseModel({ OPENAI_API_KEY: 'sk-x' })).toBe(false);
-    expect(canUseModel({ OPENAI_MODEL: 'gpt-4.1-mini' })).toBe(false);
+    expect(canUseModel({ OPENAI_MODEL: 'gpt-5-mini' })).toBe(false);
+    expect(canUseModel({ OPENAI_API_KEY: 'sk-x' })).toBe(true);
     expect(canUseModel(MODEL_ENV)).toBe(true);
   });
 });
@@ -80,13 +88,30 @@ describe('fallback sem OPENAI_API_KEY', () => {
     const { diagnosis } = await analyzePipeline({
       source: simulateFailure('build'),
       env: MODEL_ENV,
-      client: fakeClient(null, { throws: new Error('connection refused') }),
+      client: fakeClient(null, { throws: new Error('connection refused em https://user:senha@proxy.local') }),
     });
 
     expect(diagnosis.usedFallback).toBe(true);
     expect(diagnosis.failureType).toBe('build');
-    expect(diagnosis.limitations.join(' ')).toMatch(/connection refused/);
+    expect(diagnosis.limitations.join(' ')).toMatch(/Falha na análise com modelo/i);
     expect(() => diagnosisSchema.parse(diagnosis)).not.toThrow();
+  });
+
+  it('não deixa a mensagem crua do erro chegar ao relatório', async () => {
+    // Mensagem de erro é texto de terceiro: pode carregar URL com credencial,
+    // header ou corpo de requisição. Só a categoria é publicada.
+    const { diagnosis } = await analyzePipeline({
+      source: simulateFailure('build'),
+      env: MODEL_ENV,
+      client: fakeClient(null, {
+        throws: new Error('401 authorization: Bearer ghp_9AbCdEfGhIjKlMnOpQrStUvWxYz012345'),
+      }),
+    });
+
+    const serialized = JSON.stringify(diagnosis);
+    expect(serialized).not.toContain('ghp_9AbCdEfGhIjKlMnOpQrStUvWxYz012345');
+    expect(serialized).not.toContain('Bearer');
+    expect(diagnosis.limitations.join(' ')).toMatch(/categoria: `unknown`/);
   });
 
   it('cai no fallback quando a saída do modelo é inválida', async () => {
@@ -169,6 +194,124 @@ describe('análise com modelo', () => {
   });
 });
 
+describe('metadados observáveis da chamada', () => {
+  /** Resposta completa da Responses API, como o SDK a devolve. */
+  function fullResponse(output) {
+    return {
+      id: 'resp_abc123',
+      model: 'gpt-5-mini-2025-08-07',
+      status: 'completed',
+      output_parsed: output,
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 300,
+        output_tokens_details: { reasoning_tokens: 120 },
+        total_tokens: 1300,
+      },
+    };
+  }
+
+  it('registra modelo, id, latência e uso quando a chamada conclui', async () => {
+    const { diagnosis } = await analyzePipeline({
+      source: simulateFailure('test'),
+      env: MODEL_ENV,
+      client: fakeClient(null, { response: fullResponse(modelOutput()) }),
+    });
+
+    expect(diagnosis.usedFallback).toBe(false);
+    expect(diagnosis.modelProvider).toBe('openai');
+    expect(diagnosis.model).toBe('gpt-5-mini-2025-08-07');
+    expect(diagnosis.modelResponseId).toBe('resp_abc123');
+    expect(diagnosis.modelLatencyMs).toBeGreaterThanOrEqual(0);
+    expect(diagnosis.modelUsage).toEqual({
+      inputTokens: 1000,
+      outputTokens: 300,
+      reasoningTokens: 120,
+      totalTokens: 1300,
+    });
+    expect(diagnosis.modelErrorCategory).toBeNull();
+    expect(() => diagnosisSchema.parse(diagnosis)).not.toThrow();
+  });
+
+  it('não quebra quando o SDK não informa uso nem id', async () => {
+    const { diagnosis } = await analyzePipeline({
+      source: simulateFailure('test'),
+      env: MODEL_ENV,
+      client: fakeClient(modelOutput()),
+    });
+
+    expect(diagnosis.usedFallback).toBe(false);
+    expect(diagnosis.modelUsage).toBeNull();
+    expect(diagnosis.modelResponseId).toBeNull();
+    // Sem `model` na resposta, vale o modelo pedido.
+    expect(diagnosis.model).toBe('gpt-5-mini');
+    expect(() => diagnosisSchema.parse(diagnosis)).not.toThrow();
+  });
+
+  it('usa `gpt-5-mini` como padrão e aceita override por OPENAI_MODEL', async () => {
+    const semVariavel = await analyzePipeline({ source: simulateSuccess(), env: NO_KEY_ENV });
+    expect(semVariavel.diagnosis.model).toBe('gpt-5-mini');
+
+    const comVariavel = await analyzePipeline({
+      source: simulateSuccess(),
+      env: { ...MODEL_ENV, OPENAI_MODEL: 'gpt-5' },
+      client: fakeClient(modelOutput({ failureType: 'unknown' })),
+    });
+    expect(comVariavel.diagnosis.model).toBe('gpt-5');
+  });
+
+  it('zera os metadados no fallback e registra a categoria da falha', async () => {
+    const semChave = await analyzePipeline({ source: simulateFailure('test'), env: NO_KEY_ENV });
+
+    expect(semChave.diagnosis.usedFallback).toBe(true);
+    expect(semChave.diagnosis.modelResponseId).toBeNull();
+    expect(semChave.diagnosis.modelLatencyMs).toBeNull();
+    expect(semChave.diagnosis.modelUsage).toBeNull();
+    // Sem chave não houve chamada — logo não há falha de chamada a categorizar.
+    expect(semChave.diagnosis.modelErrorCategory).toBeNull();
+
+    const comErro = await analyzePipeline({
+      source: simulateFailure('test'),
+      env: MODEL_ENV,
+      client: fakeClient(null, { throws: Object.assign(new Error('too many requests'), { status: 429 }) }),
+    });
+
+    expect(comErro.diagnosis.usedFallback).toBe(true);
+    expect(comErro.diagnosis.modelErrorCategory).toBe('rate_limit');
+    expect(comErro.diagnosis.modelLatencyMs).toBeNull();
+    expect(comErro.diagnosis.modelUsage).toBeNull();
+  });
+
+  it('não deixa os metadados mudarem a decisão técnica', async () => {
+    // Mesma fonte, dois caminhos: com modelo e sem. O que o modelo escreve muda;
+    // o status do pipeline e a decisão de deploy, não.
+    const source = simulateFailure('test');
+
+    const comModelo = await analyzePipeline({
+      source,
+      env: MODEL_ENV,
+      client: fakeClient(null, { response: fullResponse(modelOutput({ riskLevel: 'low' })) }),
+    });
+    const semModelo = await analyzePipeline({ source, env: NO_KEY_ENV });
+
+    expect(comModelo.diagnosis.pipelineStatus).toBe(semModelo.diagnosis.pipelineStatus);
+    expect(comModelo.diagnosis.deployDecision).toBe(semModelo.diagnosis.deployDecision);
+    expect(comModelo.diagnosis.failureType).toBe(semModelo.diagnosis.failureType);
+    expect(comModelo.diagnosis.deployDecision).toBe('blocked');
+  });
+
+  it('declara a limitação quando uma variável de configuração é inválida', async () => {
+    const { diagnosis } = await analyzePipeline({
+      source: simulateFailure('test'),
+      env: { ...MODEL_ENV, OPENAI_MAX_OUTPUT_TOKENS: 'muitos' },
+      client: fakeClient(modelOutput()),
+    });
+
+    expect(diagnosis.limitations.join(' ')).toMatch(/OPENAI_MAX_OUTPUT_TOKENS.*padrão/i);
+    expect(diagnosis.usedFallback).toBe(false);
+  });
+});
+
 describe('payload enviado ao modelo', () => {
   it('vai mascarado e sem o log dos comandos que passaram', () => {
     const source = simulateFailure('security');
@@ -186,6 +329,30 @@ describe('payload enviado ao modelo', () => {
     expect(payload).not.toMatch(/S3nh4-Sup3r-S3cr3t4/);
     expect(payload).toContain('[REDACTED]');
     expect(payload).toContain('segredo detectado');
+  });
+
+  it('corta log gigante antes do envio e declara a limitação', async () => {
+    // Uma única linha enorme (JSON minificado, stack em uma linha) passa pela
+    // redução por número de linhas. O limite em caracteres é quem a segura.
+    const source = simulateFailure('test');
+    const failing = source.commands.find((command) => command.exitCode !== 0);
+    failing.log += `\nERROR ${'x'.repeat(40_000)}`;
+
+    const { payload } = buildModelRequest({
+      context: collectContext(source),
+      classification: classifyFailure({ sources: [], hasFailedCommands: true }),
+    });
+
+    expect(payload.length).toBeLessThanOrEqual(PAYLOAD_LIMITS.maxTotalChars + 200);
+    expect(payload).toContain('truncado');
+
+    const { diagnosis } = await analyzePipeline({
+      source,
+      env: MODEL_ENV,
+      client: fakeClient(modelOutput()),
+    });
+
+    expect(diagnosis.limitations.join(' ')).toContain('Parte dos logs foi truncada');
   });
 });
 

@@ -15,6 +15,10 @@ reports/
 # precisam escapar da regra `*.log` acima.
 !automation/fixtures/logs/*.log
 
+# Idem para os logs de contingência da aula: são material didático versionado,
+# usados quando o Railway ou a rede não estão disponíveis.
+!samples/deployment/*.log
+
 # ChatOps (FastAPI). `chatops/.env` já cai na regra `.env` acima — é lá que
 # ficam o segredo do HMAC e as URLs dos webhooks do Discord.
 chatops/.venv/

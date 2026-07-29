@@ -15,6 +15,7 @@ import {
 const LINT_OK = 'eslint . --max-warnings=0\nAll files pass linting checks.\n';
 const TEST_OK = 'Test Files  4 passed (4)\nTests  27 passed (27)\n';
 const BUILD_OK = 'vite build\ndist/index.html  0.42 kB\nbuilt in 1.20s\n';
+const DOCKER_OK = 'naming to docker.io/library/copa-figurinhas:ci done\n';
 
 const TEST_FAILED = [
   'FAIL backend/test/report.test.js > duplicateCopies',
@@ -41,12 +42,14 @@ const GREEN_COMMANDS = [
   command('lint', 0, LINT_OK),
   command('test', 0, TEST_OK),
   command('build', 0, BUILD_OK),
+  command('docker', 0, DOCKER_OK),
 ];
 
 const RED_COMMANDS = [
   command('lint', 0, LINT_OK),
   command('test', 1, TEST_FAILED),
   command('build', 0, BUILD_OK),
+  command('docker', 0, DOCKER_OK),
 ];
 
 function sourceFor(commands, environment = 'staging') {
@@ -119,7 +122,7 @@ describe('staging com todos os gates aprovados', () => {
   it('recomenda e libera para staging, sem aprovação humana', async () => {
     const { assessment } = await assess({ commands: GREEN_COMMANDS, environment: 'staging' });
 
-    expect(assessment.gateResults).toEqual({ lint: 'passed', test: 'passed', build: 'passed' });
+    expect(assessment.gateResults).toEqual({ lint: 'passed', test: 'passed', build: 'passed', docker: 'passed' });
     expect(assessment.agentRecommendation).toBe('eligible_for_staging');
     expect(assessment.policyDecision).toBe('eligible_for_staging');
     expect(assessment.requiresHumanApproval).toBe(false);
@@ -147,7 +150,7 @@ describe('production com todos os gates aprovados', () => {
   it('o agente atesta prontidão técnica, mas a política exige aprovação humana', async () => {
     const { assessment } = await assess({ commands: GREEN_COMMANDS, environment: 'production' });
 
-    expect(assessment.gateResults).toEqual({ lint: 'passed', test: 'passed', build: 'passed' });
+    expect(assessment.gateResults).toEqual({ lint: 'passed', test: 'passed', build: 'passed', docker: 'passed' });
     expect(assessment.agentRecommendation).toBe('technically_ready');
     expect(assessment.policyDecision).toBe('requires_human_approval');
     expect(assessment.requiresHumanApproval).toBe(true);
@@ -224,7 +227,12 @@ describe('contexto insuficiente', () => {
   it('bloqueia quando não há logs de comando para avaliar', async () => {
     const { assessment } = await assess({ commands: [], environment: 'staging' });
 
-    expect(assessment.gateResults).toEqual({ lint: 'skipped', test: 'skipped', build: 'skipped' });
+    expect(assessment.gateResults).toEqual({
+      lint: 'skipped',
+      test: 'skipped',
+      build: 'skipped',
+      docker: 'skipped',
+    });
     expect(assessment.policyDecision).toBe('blocked');
   });
 });
@@ -272,6 +280,7 @@ describe('buildGateResults', () => {
       lint: 'passed',
       test: 'skipped',
       build: 'skipped',
+      docker: 'skipped',
     });
   });
 });
@@ -299,7 +308,7 @@ describe('buildDeploymentManifest', () => {
     commitSha: 'a1b2c3d4e5f6',
     releaseVersion: 'v1.4.0',
     summary: 'ok',
-    gateResults: { lint: 'passed', test: 'passed', build: 'passed' },
+    gateResults: { lint: 'passed', test: 'passed', build: 'passed', docker: 'passed' },
     evidence: [],
     riskLevel: 'low',
     confidence: 'high',

@@ -1,0 +1,37 @@
+[2026-07-29T14:33:20.700Z] smoke-test: alvo copa-figurinhas-production.up.railway.app
+[2026-07-29T14:33:20.703Z] smoke-test: configuração maxAttempts=30 intervalSeconds=10 requestTimeoutMs=10000
+[2026-07-29T14:33:20.705Z] smoke-test: aguardando o commit e02b7f5 responder
+[2026-07-29T14:33:20.707Z] tentativa 1/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 111ms
+[2026-07-29T14:33:30.707Z] tentativa 2/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 112ms
+[2026-07-29T14:33:40.707Z] tentativa 3/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 91ms
+[2026-07-29T14:33:50.707Z] tentativa 4/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 92ms
+[2026-07-29T14:34:00.707Z] tentativa 5/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 93ms
+[2026-07-29T14:34:10.707Z] tentativa 6/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 94ms
+[2026-07-29T14:34:20.707Z] tentativa 7/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 95ms
+[2026-07-29T14:34:30.707Z] tentativa 8/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 96ms
+[2026-07-29T14:34:40.707Z] tentativa 9/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 97ms
+[2026-07-29T14:34:50.707Z] tentativa 10/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 98ms
+[2026-07-29T14:35:00.707Z] tentativa 11/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 99ms
+[2026-07-29T14:35:10.707Z] tentativa 12/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 100ms
+[2026-07-29T14:35:20.707Z] tentativa 13/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 101ms
+[2026-07-29T14:35:30.707Z] tentativa 14/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 102ms
+[2026-07-29T14:35:40.707Z] tentativa 15/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 103ms
+[2026-07-29T14:35:50.707Z] tentativa 16/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 104ms
+[2026-07-29T14:36:00.707Z] tentativa 17/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 105ms
+[2026-07-29T14:36:10.707Z] tentativa 18/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 106ms
+[2026-07-29T14:36:20.707Z] tentativa 19/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 107ms
+[2026-07-29T14:36:30.707Z] tentativa 20/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 108ms
+[2026-07-29T14:36:40.707Z] tentativa 21/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 109ms
+[2026-07-29T14:36:50.707Z] tentativa 22/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 110ms
+[2026-07-29T14:37:00.707Z] tentativa 23/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 111ms
+[2026-07-29T14:37:10.707Z] tentativa 24/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 112ms
+[2026-07-29T14:37:20.707Z] tentativa 25/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 113ms
+[2026-07-29T14:37:30.707Z] tentativa 26/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 114ms
+[2026-07-29T14:37:40.707Z] tentativa 27/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 115ms
+[2026-07-29T14:37:50.707Z] tentativa 28/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 116ms
+[2026-07-29T14:38:00.707Z] tentativa 29/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 117ms
+[2026-07-29T14:38:10.707Z] tentativa 30/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"} em 118ms
+[2026-07-29T14:38:20.707Z] health check: reprovado após 30 tentativas — último resultado: HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","reason":"missing required environment variable: DEMO_ALBUM_TOKEN"}
+[2026-07-29T14:38:20.737Z] rota funcional: não executada — o health check não passou
+[2026-07-29T14:38:20.747Z] smoke-test: health=FAIL funcional=FAIL
+SMOKE TEST RESULT: FAIL

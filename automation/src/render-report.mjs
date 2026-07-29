@@ -3,9 +3,20 @@
  *
  * A entrada é um diagnóstico já validado pelo schema e já mascarado. Aqui só se
  * formata — nenhuma decisão é tomada.
+ *
+ * Sobre segredos, a ordem é: **cada campo não confiável é redigido ao ser
+ * inserido** (`safe`), e o texto final passa por uma última barreira que
+ * reconhece material de credencial (`redactCredentialMaterial`).
+ *
+ * Antes, a redação completa era aplicada de uma vez sobre o Markdown pronto — o
+ * que fazia o relatório redigir o próprio rótulo: `Tokens: 1.300` casava com a
+ * regra de `token: valor` e virava `Tokens: [REDACTED]`. Rótulo escrito por nós
+ * não é conteúdo suspeito; conteúdo suspeito é o que vem do modelo e dos logs, e
+ * é nele que a regra forte precisa incidir.
  */
 
-import { redactSecrets } from './redact-secrets.mjs';
+import { redactCredentialMaterial, redactSecrets } from './redact-secrets.mjs';
+import { renderModelCallLines } from './render-model-call.mjs';
 import { sanitizeLog } from './sanitize-log.mjs';
 
 /** Marcador usado para localizar o comentário do agente na Pull Request. */
@@ -49,19 +60,20 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
   lines.push('# 🛡️ Pipeline Guardian');
   lines.push('');
   lines.push(
-    `**${diagnosis.repository}** · \`${diagnosis.branch}\` · \`${diagnosis.commitSha.slice(0, 7)}\` · ` +
+    `**${safe(diagnosis.repository)}** · \`${safe(diagnosis.branch)}\` · ` +
+      `\`${safe(diagnosis.commitSha.slice(0, 7))}\` · ` +
       `pipeline: ${PIPELINE_STATUS_LABELS[diagnosis.pipelineStatus]}`,
   );
   lines.push('');
 
   lines.push('## Resumo');
   lines.push('');
-  lines.push(diagnosis.summary);
+  lines.push(safe(diagnosis.summary));
   lines.push('');
 
   lines.push('## Sinal');
   lines.push('');
-  lines.push(`\`${diagnosis.signal}\``);
+  lines.push(`\`${safe(diagnosis.signal)}\``);
   lines.push('');
 
   lines.push('## Tipo de falha');
@@ -71,7 +83,7 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
 
   lines.push('## Causa provável');
   lines.push('');
-  lines.push(diagnosis.probableCause);
+  lines.push(safe(diagnosis.probableCause));
   lines.push('');
 
   lines.push('## Evidências');
@@ -80,8 +92,8 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
     lines.push('_Nenhuma evidência coletada._');
   } else {
     for (const item of diagnosis.evidence) {
-      const cleanExcerpt = sanitizeLog(item.excerpt);
-      lines.push(`- **${item.source}**`);
+      const cleanExcerpt = safe(sanitizeLog(item.excerpt));
+      lines.push(`- **${safe(item.source)}**`);
       lines.push('');
       lines.push('  ```text');
       lines.push(`  ${cleanExcerpt.split('\n').join('\n  ')}`);
@@ -92,7 +104,7 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
 
   lines.push('## Impacto');
   lines.push('');
-  lines.push(diagnosis.impact);
+  lines.push(safe(diagnosis.impact));
   lines.push('');
 
   lines.push('## Risco e confiança');
@@ -108,7 +120,7 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
   if (diagnosis.nextSteps.length === 0) {
     lines.push('_Nenhum passo sugerido._');
   } else {
-    diagnosis.nextSteps.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
+    diagnosis.nextSteps.forEach((step, index) => lines.push(`${index + 1}. ${safe(step)}`));
   }
   lines.push('');
 
@@ -120,7 +132,7 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
     lines.push('Motivos da política:');
     lines.push('');
     for (const reason of policyReasons) {
-      lines.push(`- ${reason}`);
+      lines.push(`- ${safe(reason)}`);
     }
     lines.push('');
   }
@@ -137,7 +149,7 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
     lines.push('_Nenhuma limitação declarada._');
   } else {
     for (const limitation of diagnosis.limitations) {
-      lines.push(`- ${limitation}`);
+      lines.push(`- ${safe(limitation)}`);
     }
   }
   lines.push('');
@@ -151,15 +163,30 @@ export function renderMarkdown(diagnosis, { policyReasons = [] } = {}) {
   );
   lines.push('');
 
+  const modelCall = renderModelCallLines(diagnosis);
+  if (modelCall.length > 0) {
+    lines.push('### Chamada ao modelo');
+    lines.push('');
+    lines.push(...modelCall);
+    lines.push('');
+  }
+
   lines.push('---');
   lines.push('');
   lines.push(
-    `\`analysisId: ${diagnosis.analysisId}\` · \`requestId: ${diagnosis.requestId}\` · ` +
-      `gerado em ${diagnosis.generatedAt}`,
+    `\`analysisId: ${safe(diagnosis.analysisId)}\` · \`requestId: ${safe(diagnosis.requestId)}\` · ` +
+      `gerado em ${safe(diagnosis.generatedAt)}`,
   );
   lines.push('');
 
-  return redactSecrets(lines.join('\n'));
+  // Última barreira. Só material de credencial: os campos não confiáveis já
+  // passaram por `safe`, e o resto do texto é rótulo nosso.
+  return redactCredentialMaterial(lines.join('\n'));
+}
+
+/** Redação completa de um campo não confiável, na hora de inseri-lo. */
+function safe(value) {
+  return redactSecrets(String(value ?? ''));
 }
 
 /**

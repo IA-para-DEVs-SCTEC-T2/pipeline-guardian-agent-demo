@@ -67,6 +67,17 @@ export function buildCiSource({ inputDir, env = process.env }) {
       inputDir,
       env,
     }),
+    // O gate do container. Sem `DOCKER_RESULT` no ambiente (ex.: um workflow
+    // que não constrói imagem), `exitCodeFromJobResult` devolve `null` e o
+    // comando entra como `skipped` — nunca como aprovado.
+    buildCommand({
+      name: 'docker',
+      command: 'docker build -t copa-figurinhas .',
+      resultEnvVar: 'DOCKER_RESULT',
+      logFile: 'docker.log',
+      inputDir,
+      env,
+    }),
   ];
 
   const patch = readIfExists(join(inputDir, 'pr.diff'));
