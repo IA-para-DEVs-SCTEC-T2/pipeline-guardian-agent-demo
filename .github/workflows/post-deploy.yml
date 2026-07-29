@@ -1,0 +1,269 @@
+name: Post-deploy validation
+
+# Validação pós-deployment.
+#
+# Quem implanta é o Railway, pela integração com o GitHub. Este workflow NÃO
+# implanta, não altera infraestrutura e não promove nada: ele olha para a
+# aplicação que já está no ar e responde se ela atende.
+#
+# Três responsabilidades, três jobs, de propósito:
+#
+#   post-deploy-smoke-test   verifica (determinístico, é o gate de verdade)
+#   deployment-diagnosis     explica (informativo, roda mesmo em falha)
+#   cd-gate                  decide (só olha o resultado do smoke test)
+
+on:
+  # Depois que o CI concluir na main. Sem CI aprovado, nada aqui roda.
+  workflow_run:
+    workflows: ["CI"]
+    types:
+      - completed
+    branches:
+      - main
+
+  # Contingência e demonstração em aula.
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Commit, tag ou branch a validar
+        type: string
+        required: false
+        default: main
+
+# Permissão mínima: nenhum job deste workflow escreve no repositório.
+permissions:
+  contents: read
+
+# Uma validação por commit. `cancel-in-progress: false`: um smoke test em
+# andamento não deve ser interrompido por um disparo novo.
+concurrency:
+  group: post-deploy-${{ github.event.workflow_run.head_sha || inputs.ref || github.ref }}
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  CI: "true"
+  NO_COLOR: "1"
+  FORCE_COLOR: "0"
+  TERM: dumb
+
+  # ---- Configuração da espera, num lugar só ----------------------------
+  # 30 tentativas × 10s = até 5 minutos aguardando a nova versão responder.
+  # Ajuste aqui para encurtar a demonstração em aula.
+  SMOKE_MAX_ATTEMPTS: "30"
+  SMOKE_INTERVAL_SECONDS: "10"
+  SMOKE_REQUEST_TIMEOUT_MS: "10000"
+
+jobs:
+  # ---------------------------------------------------------------------
+  # post-deploy-smoke-test — a verificação técnica.
+  #
+  # Determinístico: o veredito vem de código HTTP e do corpo da resposta.
+  # Nenhum modelo participa. Este job é o único que pode reprovar a
+  # validação, e o log que ele produz é a matéria-prima do diagnóstico.
+  # ---------------------------------------------------------------------
+  post-deploy-smoke-test:
+    name: Smoke test pós-deployment
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    # Disparo automático apenas para CI APROVADO. CI reprovado não chega aqui.
+    if: >-
+      ${{
+        github.event_name == 'workflow_dispatch' ||
+        github.event.workflow_run.conclusion == 'success'
+      }}
+
+    steps:
+      # O commit validado é o que o CI aprovou — não o `main` de agora, que
+      # pode já ter avançado enquanto o deployment acontecia.
+      - name: Checkout do commit implantado
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # A URL chega por variável de ambiente, nunca interpolada dentro do
+      # shell — e o YAML não guarda o endereço.
+      - name: Validar APP_BASE_URL
+        shell: bash
+        env:
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+        run: |
+          if [ -z "$APP_BASE_URL" ]; then
+            {
+              echo "## ❌ APP_BASE_URL não configurada"
+              echo
+              echo "Cadastre a URL pública da aplicação em:"
+              echo "Settings › Secrets and variables › Actions › Variables › \`APP_BASE_URL\`"
+              echo
+              echo "Consulte \`docs/railway-setup.md\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+            echo "APP_BASE_URL não configurada." >&2
+            exit 1
+          fi
+          echo "APP_BASE_URL configurada."
+
+      - name: Smoke test
+        shell: bash
+        env:
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+          # Espera a NOVA versão responder, não uma anterior que ainda esteja
+          # no ar. Se a aplicação não souber informar o commit, o smoke test
+          # aceita e registra a limitação no log.
+          SMOKE_EXPECT_COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: node automation/src/smoke-test.mjs
+
+      # `always()`: o log em falha é justamente o que interessa ao diagnóstico.
+      - name: Publicar log da validação
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployment-log
+          path: |
+            reports/deployment.log
+            reports/smoke-test.json
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Resumo do smoke test
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          {
+            echo "## 🔎 Smoke test pós-deployment"
+            echo
+            if [ -f reports/deployment.log ]; then
+              echo '```text'
+              tail -n 25 reports/deployment.log
+              echo '```'
+            else
+              echo "Nenhum log foi produzido — a validação não chegou a executar."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------
+  # deployment-diagnosis — a explicação.
+  #
+  # Roda com `always()`: um deployment quebrado é exatamente o caso em que
+  # a explicação vale mais. É INFORMATIVO — não sobrescreve o resultado do
+  # smoke test e não reprova nada (`continue-on-error: true`).
+  # ---------------------------------------------------------------------
+  deployment-diagnosis:
+    name: Diagnóstico do deployment (IA)
+    needs: post-deploy-smoke-test
+
+    if: ${{ always() && needs.post-deploy-smoke-test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    continue-on-error: true
+
+    steps:
+      - name: Checkout do commit implantado
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || inputs.ref || github.ref }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Best-effort: sem o log, o agente ainda produz um diagnóstico válido,
+      # declarando a ausência como limitação.
+      - name: Baixar log da validação
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: deployment-log
+          path: reports
+
+      - name: Executar diagnóstico
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+
+          # Opcionais. Sem eles, o fallback determinístico assume e o
+          # diagnóstico continua sendo produzido (`usedFallback: true`).
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+        run: node automation/src/analyze-deployment.mjs
+
+      - name: Publicar diagnóstico no Job Summary
+        if: ${{ always() }}
+        shell: bash
+        run: |
+          if [ -f reports/deployment-diagnosis.md ]; then
+            cat reports/deployment-diagnosis.md >> "$GITHUB_STEP_SUMMARY"
+          else
+            {
+              echo "## Diagnóstico do deployment"
+              echo
+              echo "O diagnóstico não foi gerado. O resultado técnico do deployment"
+              echo "continua sendo o do job \`post-deploy-smoke-test\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Publicar diagnóstico como artefato
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployment-diagnosis
+          path: |
+            reports/deployment-diagnosis.json
+            reports/deployment-diagnosis.md
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------
+  # cd-gate — o resultado final.
+  #
+  # Aguarda o diagnóstico terminar, mas decide APENAS pelo smoke test. A
+  # recomendação da IA não é condição de nada aqui: se ela fosse, um modelo
+  # otimista poderia aprovar um deployment quebrado.
+  # ---------------------------------------------------------------------
+  cd-gate:
+    name: CD Gate
+    needs:
+      - post-deploy-smoke-test
+      - deployment-diagnosis
+
+    if: ${{ always() && needs.post-deploy-smoke-test.result != 'skipped' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Verificar resultado técnico
+        shell: bash
+        run: |
+          echo "smoke test: ${{ needs.post-deploy-smoke-test.result }}  (gate técnico)"
+          echo "diagnóstico: ${{ needs.deployment-diagnosis.result }}  (INFORMATIVO — não entra nesta decisão)"
+          echo
+
+          if [ "${{ needs.post-deploy-smoke-test.result }}" != "success" ]; then
+            echo "CD Gate: falhou."
+            echo "A validação pós-deployment não passou. Leia o diagnóstico no Job Summary"
+            echo "para entender o porquê — mas quem reprovou foi o smoke test."
+            exit 1
+          fi
+
+          echo "CD Gate: deployment validado."
+          echo "A aplicação publicada respondeu ao health check e à rota funcional."

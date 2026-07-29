@@ -265,8 +265,15 @@ function normalizeEnvironment(environment) {
 /**
  * Reduz um texto longo preservando o que importa: as primeiras linhas, as
  * linhas com marcadores de erro e as últimas linhas.
+ *
+ * Exportada para o diagnóstico de deployment (`analyze-deployment.mjs`), que
+ * precisa exatamente da mesma redução sobre o log do smoke test.
+ *
+ * @param {string} text
+ * @param {number} maxLines
+ * @returns {{ text: string, truncated: boolean }}
  */
-function selectRelevantLines(text, maxLines) {
+export function selectRelevantLines(text, maxLines) {
   const lines = text.split('\n');
   if (lines.length <= maxLines) return { text, truncated: false };
 

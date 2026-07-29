@@ -39,7 +39,14 @@ export const CLASSIFICATION_RULES = [
     type: 'build',
     priority: 40,
     riskLevel: 'medium',
-    patterns: [/Could not resolve/i, /build failed/i, /\bRollupError\b/],
+    patterns: [
+      /Could not resolve/i,
+      /build failed/i,
+      /\bRollupError\b/,
+      // Build da imagem: o BuildKit encerra com estas duas linhas.
+      /ERROR: failed to (?:solve|build)/i,
+      /did not complete successfully: exit code/i,
+    ],
   },
   {
     type: 'test',

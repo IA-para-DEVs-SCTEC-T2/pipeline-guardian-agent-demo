@@ -23,6 +23,7 @@ import { diagnosisSchema, modelDiagnosisSchema } from '../schemas/diagnosis-sche
 import { buildEvidenceList, collectContext } from './collect-context.mjs';
 import { applyDeployPolicy } from './deploy-policy.mjs';
 import { buildDeterministicDiagnosis, classifyFailure } from './deterministic-classifier.mjs';
+import { groundEvidenceAgainst } from './ground-evidence.mjs';
 import { redactSecrets, redactSecretsDeep } from './redact-secrets.mjs';
 import { renderMarkdown } from './render-report.mjs';
 import { SCENARIOS, simulateFailure, simulateSuccess, diffFiles } from './simulate-failure.mjs';
@@ -263,22 +264,15 @@ export function mergeModelDiagnosis({ modelDiagnosis, deterministic, context }) 
  * Mantém apenas as evidências cujo trecho existe de fato no material coletado.
  * É o antídoto contra citação inventada.
  *
+ * A regra vive em `ground-evidence.mjs` e é compartilhada com o diagnóstico de
+ * deployment; aqui só se aplica ao `textSources` deste contexto.
+ *
  * @param {Array<{source: string, excerpt: string}>} evidence
  * @param {object} context
  * @returns {{ evidence: Array<object>, grounded: boolean }}
  */
 export function groundEvidence(evidence = [], context) {
-  const haystack = normalize(
-    context.textSources.map((entry) => entry.content).join('\n'),
-  );
-
-  const kept = evidence.filter((item) => {
-    const needle = normalize(item.excerpt);
-    if (needle.length < 12) return false;
-    return haystack.includes(needle);
-  });
-
-  return { evidence: kept, grounded: kept.length > 0 };
+  return groundEvidenceAgainst(evidence, context.textSources);
 }
 
 /**
@@ -469,10 +463,6 @@ async function createClient(env) {
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
-}
-
-function normalize(text) {
-  return String(text).replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function commandName(command) {

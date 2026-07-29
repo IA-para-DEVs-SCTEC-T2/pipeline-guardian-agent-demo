@@ -1,0 +1,37 @@
+[2026-07-29T13:41:04.900Z] smoke-test: alvo copa-figurinhas-production.up.railway.app
+[2026-07-29T13:41:04.903Z] smoke-test: configuração maxAttempts=30 intervalSeconds=10 requestTimeoutMs=10000
+[2026-07-29T13:41:04.905Z] smoke-test: aguardando o commit b71d004 responder
+[2026-07-29T13:41:04.907Z] tentativa 1/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 101ms
+[2026-07-29T13:41:14.907Z] tentativa 2/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 102ms
+[2026-07-29T13:41:24.907Z] tentativa 3/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 103ms
+[2026-07-29T13:41:34.907Z] tentativa 4/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 94ms
+[2026-07-29T13:41:44.907Z] tentativa 5/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 95ms
+[2026-07-29T13:41:54.907Z] tentativa 6/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 96ms
+[2026-07-29T13:42:04.907Z] tentativa 7/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 97ms
+[2026-07-29T13:42:14.907Z] tentativa 8/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 98ms
+[2026-07-29T13:42:24.907Z] tentativa 9/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 99ms
+[2026-07-29T13:42:34.907Z] tentativa 10/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 100ms
+[2026-07-29T13:42:44.907Z] tentativa 11/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 101ms
+[2026-07-29T13:42:54.907Z] tentativa 12/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 102ms
+[2026-07-29T13:43:04.907Z] tentativa 13/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 103ms
+[2026-07-29T13:43:14.907Z] tentativa 14/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 104ms
+[2026-07-29T13:43:24.907Z] tentativa 15/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 105ms
+[2026-07-29T13:43:34.907Z] tentativa 16/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 106ms
+[2026-07-29T13:43:44.907Z] tentativa 17/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 107ms
+[2026-07-29T13:43:54.907Z] tentativa 18/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 108ms
+[2026-07-29T13:44:04.907Z] tentativa 19/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 109ms
+[2026-07-29T13:44:14.907Z] tentativa 20/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 110ms
+[2026-07-29T13:44:24.907Z] tentativa 21/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 111ms
+[2026-07-29T13:44:34.907Z] tentativa 22/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 112ms
+[2026-07-29T13:44:44.907Z] tentativa 23/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 113ms
+[2026-07-29T13:44:54.907Z] tentativa 24/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 114ms
+[2026-07-29T13:45:04.907Z] tentativa 25/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 115ms
+[2026-07-29T13:45:14.907Z] tentativa 26/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 116ms
+[2026-07-29T13:45:24.907Z] tentativa 27/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 117ms
+[2026-07-29T13:45:34.907Z] tentativa 28/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 118ms
+[2026-07-29T13:45:44.907Z] tentativa 29/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 119ms
+[2026-07-29T13:45:54.907Z] tentativa 30/30 GET /api/health -> HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}} em 120ms
+[2026-07-29T13:46:04.907Z] health check: reprovado após 30 tentativas — último resultado: HTTP 503 — esperado 200 · corpo: {"status":"degraded","service":"copa-figurinhas","checks":{"http":"ok","warmup":"pending"}}
+[2026-07-29T13:46:04.937Z] rota funcional: não executada — o health check não passou
+[2026-07-29T13:46:04.947Z] smoke-test: health=FAIL funcional=FAIL
+SMOKE TEST RESULT: FAIL

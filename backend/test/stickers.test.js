@@ -4,7 +4,9 @@ import request from 'supertest';
 import { createApp } from '../src/app.js';
 import { resetStore, getSticker, listStickers } from '../src/store/store.js';
 
-const app = createApp();
+// Estes testes são sobre a API; o frontend compilado tem os seus próprios
+// (`static.test.js`) e não deve interferir aqui.
+const app = createApp({ serveFrontend: false });
 
 beforeEach(() => {
   resetStore();

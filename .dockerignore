@@ -1,0 +1,41 @@
+# Nada aqui é necessário para construir ou executar a imagem — e várias
+# entradas existem para garantir que segredo nenhum entre na imagem.
+
+# Dependências: são instaladas dentro do build, a partir do package-lock.json.
+node_modules
+**/node_modules
+
+# Histórico e automação do repositório.
+.git
+.gitignore
+.github
+
+# Saídas geradas.
+reports
+coverage
+**/coverage
+*.log
+dist
+frontend/dist
+
+# Segredos: NUNCA copiar para a imagem.
+.env
+.env.*
+**/.env
+**/.env.*
+
+# Ambiente Python do ChatOps (não faz parte desta aplicação).
+chatops/.venv
+**/__pycache__
+**/.pytest_cache
+*.pyc
+
+# Editor e sistema operacional.
+.vscode
+.idea
+.DS_Store
+
+# Documentação e exemplos: não entram na imagem de execução.
+docs
+samples
+*.md

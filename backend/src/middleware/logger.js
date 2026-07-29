@@ -1,8 +1,14 @@
+import { releaseInfo } from '../release.js';
+
 /**
- * Logger simples em JSON.
+ * Logger estruturado em JSON, uma linha por requisição.
  *
- * Nunca imprime headers sensíveis (Authorization, Cookie) nem o corpo da
- * requisição, para evitar vazamento de credenciais nos logs.
+ * Escreve em `stdout` de propósito: é assim que Docker, Railway e GitHub
+ * Actions coletam o log — sem arquivo, sem agente e sem biblioteca de
+ * observabilidade.
+ *
+ * Nunca imprime headers sensíveis (Authorization, Cookie), corpo de requisição
+ * nem variáveis de ambiente: só o que identifica a requisição e a release.
  */
 export function logger(req, res, next) {
   const start = process.hrtime.bigint();
@@ -12,13 +18,14 @@ export function logger(req, res, next) {
     const line = {
       level: res.statusCode >= 500 ? 'error' : 'info',
       time: new Date().toISOString(),
+      ...releaseInfo(),
+      message: `${req.method} ${req.originalUrl} ${res.statusCode}`,
       requestId: req.id,
       method: req.method,
       path: req.originalUrl,
-      status: res.statusCode,
+      statusCode: res.statusCode,
       durationMs: Math.round(durationMs * 100) / 100,
     };
-    // Impressão em JSON de uma linha; sem Authorization/Cookie.
     process.stdout.write(`${JSON.stringify(line)}\n`);
   });
 

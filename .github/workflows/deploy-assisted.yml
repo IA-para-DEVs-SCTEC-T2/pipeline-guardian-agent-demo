@@ -126,6 +126,20 @@ jobs:
             echo "result=failure" >> "$GITHUB_OUTPUT"
           fi
 
+      # O quarto gate: a release precisa produzir imagem. Sem push, sem
+      # registry, sem credencial — a imagem morre com o runner.
+      - name: Gate — docker build
+        id: docker
+        shell: bash
+        run: |
+          mkdir -p reports/input
+          set -o pipefail
+          if docker build --progress=plain -t copa-figurinhas:assess . 2>&1 | tee reports/input/docker.log; then
+            echo "result=success" >> "$GITHUB_OUTPUT"
+          else
+            echo "result=failure" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Preservar logs dos gates
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
@@ -146,6 +160,7 @@ jobs:
           QUALITY_RESULT: ${{ steps.lint.outputs.result }}
           TESTS_RESULT: ${{ steps.tests.outputs.result }}
           BUILD_RESULT: ${{ steps.build.outputs.result }}
+          DOCKER_RESULT: ${{ steps.docker.outputs.result }}
 
           GITHUB_SHA: ${{ steps.commit.outputs.sha }}
 

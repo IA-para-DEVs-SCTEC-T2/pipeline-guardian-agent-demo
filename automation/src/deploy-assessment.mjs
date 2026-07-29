@@ -37,7 +37,7 @@ import { redactSecrets, redactSecretsDeep } from './redact-secrets.mjs';
 import { renderDeployAssessment } from './render-deploy-assessment.mjs';
 
 /** Os gates técnicos avaliados, na ordem em que rodam no pipeline. */
-export const GATES = ['lint', 'test', 'build'];
+export const GATES = ['lint', 'test', 'build', 'docker'];
 
 /**
  * Única promoção que cada ambiente aceita. Usado duas vezes de propósito: para
