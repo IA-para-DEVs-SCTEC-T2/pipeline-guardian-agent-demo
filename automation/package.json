@@ -11,6 +11,7 @@
     "ci:diagnose": "node src/ci-diagnose.mjs",
     "deploy:assess": "node src/deploy-assessment.mjs",
     "deploy:manifest": "node src/deploy-assessment.mjs --manifest",
+    "openai:smoke": "node src/openai-smoke-test.mjs",
     "test": "vitest run",
     "lint": "eslint ."
   },

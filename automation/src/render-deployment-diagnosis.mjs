@@ -10,9 +10,15 @@
  * Fato, hipótese, recomendação e limitação ficam em seções separadas de
  * propósito — misturá-los é o jeito mais rápido de transformar diagnóstico em
  * palpite com aparência de conclusão.
+ *
+ * Sobre segredos, vale a mesma ordem de `render-report.mjs`: cada campo não
+ * confiável é redigido ao ser inserido, e o texto final passa pela barreira que
+ * reconhece material de credencial — não pela regra de `chave: valor`, que
+ * confundiria o rótulo `Tokens: 1.300` com um segredo.
  */
 
-import { redactSecrets } from './redact-secrets.mjs';
+import { redactCredentialMaterial, redactSecrets } from './redact-secrets.mjs';
+import { renderModelCallLines } from './render-model-call.mjs';
 import { sanitizeLog } from './sanitize-log.mjs';
 
 const STATUS_LABELS = {
@@ -42,8 +48,8 @@ export function renderDeploymentDiagnosis(diagnosis) {
   lines.push('# 🚦 Validação pós-deployment');
   lines.push('');
   lines.push(
-    `**${diagnosis.repository}** · \`${String(diagnosis.commitSha).slice(0, 7)}\` · ` +
-      `\`${diagnosis.targetHost}\` · resultado: ${STATUS_LABELS[diagnosis.status]}`,
+    `**${safe(diagnosis.repository)}** · \`${safe(String(diagnosis.commitSha).slice(0, 7))}\` · ` +
+      `\`${safe(diagnosis.targetHost)}\` · resultado: ${STATUS_LABELS[diagnosis.status]}`,
   );
   lines.push('');
 
@@ -54,7 +60,7 @@ export function renderDeploymentDiagnosis(diagnosis) {
 
   lines.push(diagnosis.status === 'success' ? '## Resultado' : '## Erro principal');
   lines.push('');
-  lines.push(diagnosis.summary);
+  lines.push(safe(diagnosis.summary));
   lines.push('');
   lines.push(`Tipo: \`${diagnosis.failureType}\` (${FAILURE_TYPE_LABELS[diagnosis.failureType]})`);
   lines.push('');
@@ -67,10 +73,10 @@ export function renderDeploymentDiagnosis(diagnosis) {
     lines.push('_Nenhuma evidência coletada._');
   } else {
     for (const item of diagnosis.evidence) {
-      lines.push(`- **${item.source}**`);
+      lines.push(`- **${safe(item.source)}**`);
       lines.push('');
       lines.push('  ```text');
-      lines.push(`  ${sanitizeLog(item.excerpt).split('\n').join('\n  ')}`);
+      lines.push(`  ${safe(sanitizeLog(item.excerpt)).split('\n').join('\n  ')}`);
       lines.push('  ```');
     }
   }
@@ -81,8 +87,9 @@ export function renderDeploymentDiagnosis(diagnosis) {
   lines.push('_Hipótese inferida a partir das evidências — não é fato observado._');
   lines.push('');
   lines.push(
-    diagnosis.probableCause ??
-      '_Não foi possível estabelecer uma causa provável com o material disponível._',
+    diagnosis.probableCause
+      ? safe(diagnosis.probableCause)
+      : '_Não foi possível estabelecer uma causa provável com o material disponível._',
   );
   lines.push('');
 
@@ -96,7 +103,7 @@ export function renderDeploymentDiagnosis(diagnosis) {
   if (diagnosis.nextSteps.length === 0) {
     lines.push('_Nenhum passo sugerido._');
   } else {
-    diagnosis.nextSteps.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
+    diagnosis.nextSteps.forEach((step, index) => lines.push(`${index + 1}. ${safe(step)}`));
   }
   lines.push('');
 
@@ -106,7 +113,7 @@ export function renderDeploymentDiagnosis(diagnosis) {
     lines.push('_Nenhuma limitação declarada._');
   } else {
     for (const limitation of diagnosis.limitations) {
-      lines.push(`- ${limitation}`);
+      lines.push(`- ${safe(limitation)}`);
     }
   }
   lines.push('');
@@ -119,6 +126,15 @@ export function renderDeploymentDiagnosis(diagnosis) {
       : '🤖 **Modelo** (`usedFallback: false`) — gerado com saída estruturada validada por schema.',
   );
   lines.push('');
+
+  const modelCall = renderModelCallLines(diagnosis);
+  if (modelCall.length > 0) {
+    lines.push('### Chamada ao modelo');
+    lines.push('');
+    lines.push(...modelCall);
+    lines.push('');
+  }
+
   lines.push(
     '> Este diagnóstico é **informativo**. Quem aprova ou reprova o deployment é o smoke test ' +
       'determinístico (códigos HTTP e exit code) — a IA descreve, não decide.',
@@ -128,10 +144,16 @@ export function renderDeploymentDiagnosis(diagnosis) {
   lines.push('---');
   lines.push('');
   lines.push(
-    `\`analysisId: ${diagnosis.analysisId}\` · \`requestId: ${diagnosis.requestId}\` · ` +
-      `gerado em ${diagnosis.generatedAt}`,
+    `\`analysisId: ${safe(diagnosis.analysisId)}\` · \`requestId: ${safe(diagnosis.requestId)}\` · ` +
+      `gerado em ${safe(diagnosis.generatedAt)}`,
   );
   lines.push('');
 
-  return redactSecrets(lines.join('\n'));
+  // Última barreira: só material de credencial. Ver o cabeçalho do módulo.
+  return redactCredentialMaterial(lines.join('\n'));
+}
+
+/** Redação completa de um campo não confiável, na hora de inseri-lo. */
+function safe(value) {
+  return redactSecrets(String(value ?? ''));
 }

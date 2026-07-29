@@ -62,10 +62,44 @@ describe('diagnosisSchema', () => {
       'requiresHumanApproval',
       'limitations',
       'usedFallback',
+      // Metadados observáveis da chamada ao modelo: opcionais e sem efeito
+      // sobre decisão nenhuma.
+      'modelProvider',
+      'model',
+      'modelResponseId',
+      'modelLatencyMs',
+      'modelUsage',
+      'modelErrorCategory',
       'generatedAt',
     ];
 
     expect(Object.keys(diagnosisSchema.shape)).toEqual(expected);
+  });
+
+  it('aceita um diagnóstico sem os metadados do modelo (relatório anterior)', () => {
+    const { modelProvider: _p, model: _m, ...semMetadados } = validDiagnosis();
+    expect(diagnosisSchema.safeParse(semMetadados).success).toBe(true);
+  });
+
+  it('aceita os metadados da chamada, inclusive zerados pelo fallback', () => {
+    const parsed = diagnosisSchema.parse(
+      validDiagnosis({
+        modelProvider: 'openai',
+        model: 'gpt-5-mini',
+        modelResponseId: null,
+        modelLatencyMs: null,
+        modelUsage: null,
+        modelErrorCategory: 'timeout',
+      }),
+    );
+
+    expect(parsed.model).toBe('gpt-5-mini');
+    expect(parsed.modelErrorCategory).toBe('timeout');
+  });
+
+  it('rejeita categoria de erro fora do enum e latência negativa', () => {
+    expect(diagnosisSchema.safeParse(validDiagnosis({ modelErrorCategory: 'quota' })).success).toBe(false);
+    expect(diagnosisSchema.safeParse(validDiagnosis({ modelLatencyMs: -1 })).success).toBe(false);
   });
 
   it('rejeita failureType fora do enum', () => {

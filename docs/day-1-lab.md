@@ -206,6 +206,24 @@ Repare em `usedFallback`. Se a turma não tiver `OPENAI_API_KEY` configurada, el
 estará `true`: o diagnóstico veio do **classificador determinístico**, e mesmo
 assim é válido, estruturado e útil.
 
+Com a chave configurada (**só ela** — o modelo padrão é `gpt-5-mini`), o
+relatório traz também o que a chamada custou:
+
+```text
+### Chamada ao modelo
+
+- Modelo: `gpt-5-mini` (openai)
+- Fallback: não
+- Latência: 1,2 s
+- Tokens: 1.300 (entrada 1.000 · saída 300 · raciocínio 120)
+```
+
+Vale perguntar para a turma: **esses números decidem alguma coisa?** Não. O
+`ci-gate` continua lendo só `quality`, `tests`, `build` e `docker-build`. Se a
+chamada falhar, o relatório diz a categoria (`timeout`, `rate_limit`,
+`authentication`…) e o diagnóstico sai pelo fallback — a falha do modelo nunca
+esconde a falha técnica, e nunca inventa uma.
+
 Agora quebre o pipeline de propósito, num segundo commit na mesma PR:
 
 ```js
@@ -349,11 +367,29 @@ Esta é a conclusão do dia. Três provas:
 **1. Sem chave da OpenAI, o diagnóstico continua saindo.**
 
 ```bash
-env -u OPENAI_API_KEY -u OPENAI_MODEL \
+OPENAI_API_KEY= \
   npm run deployment:analyze -- --log samples/deployment/startup-failure.log --status failure
 ```
 
-Saiu igual, com `usedFallback: true`. O agente **degrada, não quebra**.
+Basta neutralizar a **chave**: `OPENAI_MODEL` sozinha não liga nada, porque o
+modelo já tem padrão (`gpt-5-mini`).
+
+> Note o `=` no fim, sem valor. `env -u OPENAI_API_KEY` **não** funciona aqui:
+> ao remover a variável do ambiente, o `dotenv` a repõe a partir do
+> `automation/.env` (ou do `.env` da raiz) e a chave volta. Uma variável já
+> definida — mesmo vazia — o `dotenv` não sobrescreve, e `enabled` fica `false`. Rode o mesmo comando **com** a chave e compare os
+dois `deployment-diagnosis.json`:
+
+| Campo               | Com chave        | Sem chave |
+| ------------------- | ---------------- | --------- |
+| `usedFallback`      | `false`          | `true`    |
+| `status`            | `failure`        | `failure` |
+| `failureType`       | `startup`        | `startup` |
+| `model`             | `gpt-5-mini`     | `gpt-5-mini` (o que *seria* usado) |
+| `modelUsage`        | contagens        | `null`    |
+| `modelResponseId`   | `resp_…`         | `null`    |
+
+O texto muda; **a decisão técnica não**. O agente **degrada, não quebra**.
 
 **2. Nem a IA nem você decidem o `status`.**
 

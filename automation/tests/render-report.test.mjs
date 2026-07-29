@@ -32,6 +32,62 @@ describe('renderMarkdown', () => {
     }
   });
 
+  it('mostra a chamada ao modelo sem expor nada sensível', async () => {
+    const { diagnosis } = await diagnosisFor('test');
+    const markdown = renderMarkdown({
+      ...diagnosis,
+      usedFallback: false,
+      modelProvider: 'openai',
+      model: 'gpt-5-mini',
+      modelResponseId: 'resp_abc123',
+      modelLatencyMs: 1234,
+      modelUsage: {
+        inputTokens: 1000,
+        outputTokens: 300,
+        reasoningTokens: 120,
+        totalTokens: 1300,
+      },
+      modelErrorCategory: null,
+    });
+
+    expect(markdown).toContain('### Chamada ao modelo');
+    expect(markdown).toContain('Modelo: `gpt-5-mini`');
+    expect(markdown).toContain('Fallback: não');
+    expect(markdown).toContain('Latência: 1,2 s');
+    expect(markdown).toContain('Tokens: 1.300');
+    expect(markdown).toContain('entrada 1.000');
+    expect(markdown).toContain('raciocínio 120');
+  });
+
+  it('mostra a categoria da falha quando a chamada não concluiu', async () => {
+    const { diagnosis } = await diagnosisFor('test');
+    const markdown = renderMarkdown({
+      ...diagnosis,
+      modelProvider: 'openai',
+      model: 'gpt-5-mini',
+      modelResponseId: null,
+      modelLatencyMs: null,
+      modelUsage: null,
+      modelErrorCategory: 'timeout',
+    });
+
+    expect(markdown).toContain('Fallback: sim');
+    expect(markdown).toContain('Latência: —');
+    expect(markdown).toContain('Tokens: —');
+    expect(markdown).toContain('`timeout` (tempo esgotado)');
+  });
+
+  it('omite a seção em relatórios anteriores a estes metadados', async () => {
+    const { diagnosis } = await diagnosisFor('test');
+    const {
+      modelProvider: _provider,
+      model: _model,
+      ...anterior
+    } = diagnosis;
+
+    expect(renderMarkdown(anterior)).not.toContain('### Chamada ao modelo');
+  });
+
   it('mostra a decisão, a aprovação humana e o uso de fallback', async () => {
     const { diagnosis } = await diagnosisFor('test');
     const markdown = renderMarkdown(diagnosis);

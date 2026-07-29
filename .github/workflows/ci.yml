@@ -282,9 +282,23 @@ jobs:
           # Token temporário do workflow.
           GITHUB_TOKEN: ${{ github.token }}
 
-          # Opcionais. Sem eles, o agente usa fallback determinístico.
+          # A chave é o que liga o modelo — e só este job a recebe. `quality`,
+          # `tests`, `build`, `docker-build` e `ci-gate` não a veem: nenhum
+          # deles chama a OpenAI, e um secret entregue a quem não precisa é
+          # superfície de exposição de graça.
+          #
+          # Sem a chave (fork, secret não cadastrado), o agente usa o
+          # classificador determinístico e o diagnóstico continua saindo.
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          #
+          # As três abaixo NÃO são secrets: são configuração. Ficam vazias
+          # quando a variável não existe no repositório, e é `openai-config.mjs`
+          # quem resolve o padrão (`gpt-5-mini`, `low`, `2000`). O padrão não é
+          # repetido aqui de propósito — dois lugares com o mesmo padrão viram
+          # dois padrões diferentes na primeira vez que um deles mudar.
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT }}
+          OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS }}
 
           # Dia 2: o canal do Discord substitui o comentário automático como
           # saída principal do diagnóstico. Com 'false', `upsertPullRequestComment`

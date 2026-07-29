@@ -358,6 +358,63 @@ Tudo é opcional — copie `automation/.env.example` para `automation/.env` se
 quiser usar o modelo. O agente **não faz deploy** e **não comenta na PR** sem
 opt-in explícito (`AUTOMATION_ALLOW_PR_COMMENT=true` + `GITHUB_TOKEN`).
 
+**Basta `OPENAI_API_KEY`.** O modelo padrão é `gpt-5-mini` e vem resolvido em
+`automation/src/openai-config.mjs` — `OPENAI_MODEL` só existe para trocá-lo.
+Toda a configuração fica nesse módulo, e a chave nunca entra nela: vai direto do
+ambiente para o SDK.
+
+| Variável                   | Tipo         | Padrão       |
+| -------------------------- | ------------ | ------------ |
+| `OPENAI_API_KEY`           | **segredo**  | —            |
+| `OPENAI_MODEL`             | configuração | `gpt-5-mini` |
+| `OPENAI_REASONING_EFFORT`  | configuração | `low`        |
+| `OPENAI_MAX_OUTPUT_TOKENS` | configuração | `2000`       |
+| `OPENAI_TIMEOUT_MS`        | configuração | `45000`      |
+| `OPENAI_MAX_RETRIES`       | configuração | `1`          |
+
+Valor inválido não vira comportamento imprevisível: cai no padrão e a
+substituição é **declarada como limitação** no próprio diagnóstico.
+
+### A chamada ao modelo
+
+Responses API com saída estruturada (`responses.parse` + `zodTextFormat`),
+validada por Zod dos dois lados. Cada diagnóstico é uma requisição
+**independente e sem estado**: `store: false`, sem `previous_response_id`, sem
+background mode, sem ferramentas externas, sem upload.
+
+> `store: false` evita que a resposta fique guardada na plataforma para reuso
+> pela aplicação. Não é promessa de ausência de retenção operacional ou de
+> monitoramento de abuso do provedor — para isso, valem os termos da OpenAI.
+
+O relatório registra o que a chamada custou, sem nada sensível:
+
+```text
+Modelo: gpt-5-mini
+Fallback: não
+Latência: 1,2 s
+Tokens: 1.300 (entrada 1.000 · saída 300 · raciocínio 120)
+```
+
+Esses números são **observabilidade**, não voto: não entram na decisão do CI nem
+na do CD. Quando a chamada falha, o relatório traz só a **categoria**
+(`authentication`, `rate_limit`, `timeout`, `network`, `invalid_output`,
+`incomplete`, `unknown`) — nunca a mensagem bruta do SDK, que poderia arrastar
+URL com credencial ou header para dentro de um artefato.
+
+### Testar a integração de verdade
+
+Os testes normais usam cliente injetado e **não** chamam a API. Para provar que
+a chave, o modelo e a saída estruturada funcionam agora, existe um comando
+explícito e opt-in:
+
+```bash
+OPENAI_LIVE_TEST=true npm run openai:smoke
+```
+
+Sem `OPENAI_LIVE_TEST=true` ele recusa a chamada e explica como habilitá-la.
+Consome poucos tokens, não roda em `npm test`, não roda em `npm run ci` e não
+roda em Pull Request.
+
 ---
 
 ## Deployment no Railway
@@ -473,10 +530,12 @@ e mesmo assim são classificados de forma diferente — `healthcheck`, `startup`
 
 ## Fallback sem OpenAI
 
-| Cenário                                     | Comportamento                                            |
-| ------------------------------------------- | -------------------------------------------------------- |
-| `OPENAI_API_KEY` + `OPENAI_MODEL` definidos  | Responses API com saída estruturada validada (Zod)        |
-| Sem chave, erro de rede ou saída inválida    | **Classificador determinístico** (`usedFallback: true`)   |
+| Cenário                                                     | Comportamento                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------- |
+| `OPENAI_API_KEY` definida                                    | Responses API com saída estruturada validada (Zod)      |
+| Sem chave                                                    | **Classificador determinístico** (`usedFallback: true`) |
+| Erro de rede, timeout, 401, 429 ou saída fora do schema      | **Classificador determinístico** (`usedFallback: true`) |
+| Resposta `incomplete` (estourou `OPENAI_MAX_OUTPUT_TOKENS`)  | **Classificador determinístico** (`usedFallback: true`) |
 
 Vale para os **dois** agentes (pipeline e deployment). Em qualquer um dos casos
 a saída é válida contra o mesmo schema, e a falha do modelo nunca esconde a
@@ -499,34 +558,57 @@ COMMIT_SHA=local
 ```
 
 **2. Variáveis do agente** (`automation/.env.example`) — só na automação, nunca
-na aplicação:
+na aplicação. Localmente, em `automation/.env` (ignorado pelo git):
 
 ```text
-OPENAI_API_KEY=
-OPENAI_MODEL=
-APP_BASE_URL=
+OPENAI_API_KEY=            # segredo — a única que liga o modelo
+OPENAI_MODEL=gpt-5-mini    # configuração (não sensível)
+OPENAI_REASONING_EFFORT=low
+OPENAI_MAX_OUTPUT_TOKENS=2000
+OPENAI_TIMEOUT_MS=45000
+OPENAI_MAX_RETRIES=1
+APP_BASE_URL=              # URL pública — não é segredo
 SMOKE_MAX_ATTEMPTS=30
 SMOKE_INTERVAL_SECONDS=10
 ```
 
 **3. No GitHub** (Settings › Secrets and variables › Actions):
 
-| Tipo                    | Nome              | Obrigatório | Para quê                             |
-| ----------------------- | ----------------- | ----------- | ------------------------------------ |
-| Repository **variable** | `APP_BASE_URL`    | **sim**     | URL pública validada pelo smoke test |
-| Repository **variable** | `OPENAI_MODEL`    | não         | liga o diagnóstico por modelo        |
-| Repository **secret**   | `OPENAI_API_KEY`  | não         | idem                                 |
+| Tipo                    | Nome                       | Obrigatório | Para quê                             |
+| ----------------------- | -------------------------- | ----------- | ------------------------------------ |
+| Repository **variable** | `APP_BASE_URL`             | **sim**     | URL pública validada pelo smoke test |
+| Repository **secret**   | `OPENAI_API_KEY`           | não         | liga o diagnóstico por modelo        |
+| Repository **variable** | `OPENAI_MODEL`             | não         | troca o modelo (padrão `gpt-5-mini`) |
+| Repository **variable** | `OPENAI_REASONING_EFFORT`  | não         | padrão `low`                         |
+| Repository **variable** | `OPENAI_MAX_OUTPUT_TOKENS` | não         | padrão `2000`                        |
+
+Só os jobs de diagnóstico recebem o secret: `diagnose` (CI),
+`deployment-diagnosis` (pós-deployment) e `assess` (deploy assistido). Os gates
+técnicos — `quality`, `tests`, `build`, `docker-build`, `ci-gate`,
+`post-deploy-smoke-test` e `cd-gate` — **não** o veem, porque nenhum deles chama
+a OpenAI.
+
+No `post-deploy.yml`, disparado por `workflow_run`, a chave só é entregue quando
+a origem é confiável: disparo manual, ou CI **aprovado** vindo de um **push** na
+**`main`**. Nenhum workflow usa `pull_request_target` nem faz checkout de código
+não confiável num job com acesso ao secret. PR de fork continua sem chave — e
+com diagnóstico, via fallback.
 
 **4. No Railway** (Variables do serviço) — nenhuma é obrigatória. `PORT` e
 `NODE_ENV` são fornecidos pela plataforma e pela imagem; `RAILWAY_GIT_COMMIT_SHA`
 é preenchido automaticamente e vira o `commitSha` do health check.
+
+> **Não cadastre `OPENAI_API_KEY` no Railway.** O container da CopaFigurinhas
+> não chama a OpenAI: quem chama são os workflows do GitHub e os scripts locais
+> de automação. Uma chave lá seria superfície de exposição sem nenhum uso.
 
 > Valores reais nunca vão para os arquivos de exemplo, e a `APP_BASE_URL` nunca
 > é escrita dentro do YAML.
 
 Sobre **quando** cada valor existe: `VITE_API_URL` só valeria **em build** (e é
 deliberadamente deixado vazio); `APP_VERSION`, `COMMIT_SHA` e `PORT` são lidos
-**em runtime**; `OPENAI_API_KEY` só existe dentro dos jobs do GitHub Actions.
+**em runtime**; `OPENAI_API_KEY` só existe dentro dos jobs de diagnóstico do
+GitHub Actions e no `automation/.env` da máquina de quem desenvolve.
 
 ---
 
@@ -568,5 +650,9 @@ sem acesso, integração do GitHub com problema e API da OpenAI fora do ar.
 | Smoke test: `ECONNREFUSED` em todas as tentativas       | URL errada ou domínio ainda não gerado no Railway.                         |
 | Smoke test: `HTTP 502 · Application failed to respond`  | O processo não subiu. Veja **Deployments › View Logs** no Railway.         |
 | Smoke test: versão antiga respondendo                   | O deployment anterior ainda está ativo; aguarde ou reimplante.             |
-| Diagnóstico saiu com `usedFallback: true`               | Esperado sem `OPENAI_API_KEY`/`OPENAI_MODEL`. O relatório continua válido. |
+| Diagnóstico saiu com `usedFallback: true`               | Esperado sem `OPENAI_API_KEY`. O relatório continua válido — veja `modelErrorCategory` para saber se houve tentativa e por que falhou. |
+| `modelErrorCategory: authentication`                    | Chave inválida, revogada ou sem acesso ao modelo. Confira com `OPENAI_LIVE_TEST=true npm run openai:smoke`. |
+| `modelErrorCategory: incomplete`                        | A resposta estourou o teto de saída. Aumente `OPENAI_MAX_OUTPUT_TOKENS` ou reduza `OPENAI_REASONING_EFFORT`. |
+| `modelErrorCategory: rate_limit`                        | Limite da conta. O diagnóstico saiu pelo fallback; repetir mais tarde resolve. |
+| `npm run openai:smoke` recusa executar                  | Falta o opt-in: `OPENAI_LIVE_TEST=true npm run openai:smoke`.              |
 | `Post-deploy validation` não disparou                   | Só roda após um **CI aprovado na `main`**. Use **Run workflow** para forçar. |

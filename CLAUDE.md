@@ -40,10 +40,42 @@ Agente que lê **metadados do pipeline, logs e diff da PR** e produz um
 diagnóstico estruturado (`reports/diagnosis.json` + `.md`). Decisões que valem
 para quem for evoluí-lo:
 
-- **Degrada, não quebra.** Sem `OPENAI_API_KEY`/`OPENAI_MODEL`, com erro de rede
-  ou com saída fora do schema, cai no **classificador determinístico**
-  (`deterministic-classifier.mjs`) e ainda entrega um diagnóstico válido, com
-  `usedFallback: true`. O agente nunca fica sem resposta.
+- **Degrada, não quebra.** Sem `OPENAI_API_KEY`, com erro de rede, timeout, 401,
+  429, resposta `incomplete` ou saída fora do schema, cai no **classificador
+  determinístico** (`deterministic-classifier.mjs`) e ainda entrega um
+  diagnóstico válido, com `usedFallback: true`. O agente nunca fica sem resposta.
+- **Uma configuração da OpenAI, um cliente.** `openai-config.mjs` é puro (não
+  importa o SDK) e é o **único** lugar onde a string `gpt-5-mini` existe;
+  `openai-client.mjs` tem a fábrica do cliente e a única chamada à Responses
+  API. Os workflows passam `OPENAI_MODEL` vazio quando a variável não existe no
+  GitHub — o padrão é resolvido no código, nunca no YAML, porque dois padrões em
+  dois arquivos viram dois padrões diferentes na primeira divergência.
+- **Só a chave liga o modelo.** `canUseModel` olha apenas `OPENAI_API_KEY`.
+  Exigir `OPENAI_MODEL` junto, como antes, só criava uma forma a mais de o
+  modelo ficar desligado sem querer. A chave nunca entra na configuração
+  resolvida: vai do `env` direto para o construtor do SDK.
+- **Erro do modelo vira categoria, não texto.** O relatório recebe
+  `authentication`, `rate_limit`, `timeout`, `network`, `invalid_output`,
+  `incomplete` ou `unknown` — nunca a mensagem do SDK, que pode carregar URL com
+  credencial, header ou corpo de requisição.
+- **Metadados da chamada são conta de luz, não voto.** `model`,
+  `modelResponseId`, `modelLatencyMs` e `modelUsage` são opcionais no schema
+  (relatórios antigos continuam válidos) e não entram em decisão de CI nem de
+  CD.
+- **Requisição independente e sem estado.** `store: false` em toda chamada, sem
+  `previous_response_id`, sem background mode, sem ferramentas externas, sem
+  upload. `store: false` evita o armazenamento da resposta para reuso pela
+  aplicação — não é promessa de ausência de retenção operacional do provedor.
+- **Chamada real só com opt-in duplo.** `npm run openai:smoke` exige
+  `OPENAI_LIVE_TEST=true` **e** a chave. `npm test` e `npm run ci` nunca tocam a
+  rede: os testes injetam cliente falso.
+- **Métrica de uso não é credencial.** A regra `token: valor` do
+  `redact-secrets.mjs` abre exceção para nome no plural **e** valor numérico
+  (`Tokens: 1.300`, `totalTokens: 1300`) — `token: valor-real` e
+  `password: 123456` continuam mascarados. Os renderizadores redigem **campo a
+  campo** e fecham com `redactCredentialMaterial`, que só reconhece material de
+  credencial: aplicar a regra de `chave: valor` sobre o Markdown pronto fazia o
+  relatório mascarar o próprio rótulo de consumo de tokens.
 - **O modelo não decide deploy.** `modelDiagnosisSchema` sequer expõe
   `deployDecision` ao modelo. A decisão vem de `deploy-policy.mjs`, aplicada
   **depois** da análise, com precedência `blocked > requires_human_approval >
@@ -105,6 +137,8 @@ npm run agent:analyze        # agente sobre a execução real (roda o pipeline e
 npm run agent:fixture -- test  # agente sobre um cenário simulado (lint, test, dependency,
                                # build, environment, permission, security, unknown, success)
 
+OPENAI_LIVE_TEST=true npm run openai:smoke   # única chamada real à OpenAI do repositório
+
 npm start                    # só o backend (serve frontend/dist se existir)
 npm run start:production     # build do frontend + Express em modo produção
 npm run docker:build         # imagem de produção
@@ -152,6 +186,12 @@ Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
   A única chamada de rede do projeto é a do agente à OpenAI — e ela é opcional.
 - **Não** imprimir `Authorization`, cookies ou corpo de requisição nos logs.
 - **Não** enviar conteúdo não mascarado ao modelo.
+- **Não** cadastrar `OPENAI_API_KEY` no Railway: o container não chama a OpenAI.
+  A chave existe nos jobs de diagnóstico do GitHub e no `automation/.env` local.
+- **Não** entregar a chave a job que não diagnostica, nem usar
+  `pull_request_target`, nem fazer checkout de código não confiável em job com
+  acesso ao secret.
+- **Não** fazer chamada real à OpenAI em `npm test` ou `npm run ci`.
 
 ## Regra: nada de banco, autenticação ou Docker
 

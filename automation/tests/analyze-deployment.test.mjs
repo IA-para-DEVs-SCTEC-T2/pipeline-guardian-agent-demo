@@ -22,7 +22,8 @@ const SAMPLES = join(HERE, '..', '..', 'samples', 'deployment');
 const sample = (name) => readFileSync(join(SAMPLES, `${name}.log`), 'utf8');
 
 const NO_MODEL_ENV = {};
-const MODEL_ENV = { OPENAI_API_KEY: 'sk-test-0123456789abcdef', OPENAI_MODEL: 'gpt-test' };
+/** Só a chave: `OPENAI_MODEL` é opcional e o padrão é `gpt-5-mini`. */
+const MODEL_ENV = { OPENAI_API_KEY: 'sk-test-0123456789abcdef' };
 
 const METADATA = {
   repository: 'senai/copa-figurinhas',
@@ -31,12 +32,12 @@ const METADATA = {
 };
 
 /** Cliente OpenAI falso: devolve o que o teste mandar, sem tocar a rede. */
-function fakeClient(output, { throws = null } = {}) {
+function fakeClient(output, { throws = null, response = null } = {}) {
   return {
     responses: {
       parse: async () => {
         if (throws) throw throws;
-        return { status: 'completed', output_parsed: output };
+        return response ?? { status: 'completed', output_parsed: output };
       },
     },
   };
@@ -73,10 +74,10 @@ function tempDir() {
 /* ------------------------------------------------------------------------- */
 
 describe('canUseModel', () => {
-  it('exige chave E modelo', () => {
+  it('exige apenas a chave — o modelo tem padrão', () => {
     expect(canUseModel({})).toBe(false);
-    expect(canUseModel({ OPENAI_API_KEY: 'sk-x' })).toBe(false);
     expect(canUseModel({ OPENAI_MODEL: 'gpt-x' })).toBe(false);
+    expect(canUseModel({ OPENAI_API_KEY: 'sk-x' })).toBe(true);
     expect(canUseModel(MODEL_ENV)).toBe(true);
   });
 });
@@ -244,6 +245,122 @@ describe('com o modelo disponível', () => {
     expect(diagnosis.status).toBe('success');
     expect(diagnosis.failureType).toBe('success');
     expect(diagnosis.limitations.join(' ')).toMatch(/descartada.*smoke test aprovou/i);
+  });
+});
+
+describe('metadados observáveis da chamada', () => {
+  function fullResponse(output) {
+    return {
+      id: 'resp_deploy_1',
+      model: 'gpt-5-mini-2025-08-07',
+      status: 'completed',
+      output_parsed: output,
+      usage: {
+        input_tokens: 900,
+        output_tokens: 240,
+        output_tokens_details: { reasoning_tokens: 64 },
+        total_tokens: 1140,
+      },
+    };
+  }
+
+  it('registra modelo, id, latência e uso quando a chamada conclui', async () => {
+    const { diagnosis } = await analyzeDeployment({
+      log: sample('healthcheck-failure'),
+      status: 'failure',
+      metadata: METADATA,
+      env: MODEL_ENV,
+      client: fakeClient(null, { response: fullResponse(modelOutput()) }),
+    });
+
+    expect(diagnosis.usedFallback).toBe(false);
+    expect(diagnosis.modelProvider).toBe('openai');
+    expect(diagnosis.model).toBe('gpt-5-mini-2025-08-07');
+    expect(diagnosis.modelResponseId).toBe('resp_deploy_1');
+    expect(diagnosis.modelUsage.totalTokens).toBe(1140);
+    expect(diagnosis.modelErrorCategory).toBeNull();
+    expect(() => deploymentDiagnosisSchema.parse(diagnosis)).not.toThrow();
+  });
+
+  it('usa `gpt-5-mini` como padrão, mesmo sem chave', async () => {
+    const { diagnosis } = await analyzeDeployment({
+      log: sample('success'),
+      status: 'success',
+      metadata: METADATA,
+      env: NO_MODEL_ENV,
+    });
+
+    expect(diagnosis.model).toBe('gpt-5-mini');
+    expect(diagnosis.usedFallback).toBe(true);
+    expect(diagnosis.modelUsage).toBeNull();
+  });
+
+  it('classifica a falha da chamada sem publicar a mensagem bruta', async () => {
+    const cases = [
+      [Object.assign(new Error('invalid api key sk-proj-abc123defghi'), { status: 401 }), 'authentication'],
+      [Object.assign(new Error('slow down'), { status: 429 }), 'rate_limit'],
+      [Object.assign(new Error('socket hang up'), { code: 'ECONNRESET' }), 'network'],
+      [Object.assign(new Error('deu ruim'), { code: 'ETIMEDOUT' }), 'timeout'],
+    ];
+
+    for (const [error, expected] of cases) {
+      const { diagnosis } = await analyzeDeployment({
+        log: sample('startup-failure'),
+        status: 'failure',
+        metadata: METADATA,
+        env: MODEL_ENV,
+        client: fakeClient(null, { throws: error }),
+      });
+
+      expect(diagnosis.modelErrorCategory).toBe(expected);
+      expect(diagnosis.usedFallback).toBe(true);
+      // A falha do modelo não muda o que o smoke test observou.
+      expect(diagnosis.status).toBe('failure');
+      expect(diagnosis.failureType).toBe('startup');
+      expect(JSON.stringify(diagnosis)).not.toContain('sk-proj-abc123defghi');
+    }
+  });
+
+  it('trata resposta incompleta e resposta sem saída estruturada como falha do modelo', async () => {
+    const incomplete = await analyzeDeployment({
+      log: sample('healthcheck-failure'),
+      status: 'failure',
+      metadata: METADATA,
+      env: MODEL_ENV,
+      client: fakeClient(null, {
+        response: {
+          status: 'incomplete',
+          incomplete_details: { reason: 'max_output_tokens' },
+          output_parsed: null,
+        },
+      }),
+    });
+
+    expect(incomplete.diagnosis.usedFallback).toBe(true);
+    expect(incomplete.diagnosis.modelErrorCategory).toBe('incomplete');
+
+    const semSaida = await analyzeDeployment({
+      log: sample('healthcheck-failure'),
+      status: 'failure',
+      metadata: METADATA,
+      env: MODEL_ENV,
+      client: fakeClient(null, { response: { status: 'completed', output_parsed: null } }),
+    });
+
+    expect(semSaida.diagnosis.usedFallback).toBe(true);
+    expect(semSaida.diagnosis.modelErrorCategory).toBe('invalid_output');
+
+    const foraDoSchema = await analyzeDeployment({
+      log: sample('healthcheck-failure'),
+      status: 'failure',
+      metadata: METADATA,
+      env: MODEL_ENV,
+      client: fakeClient({ summary: 'sem os demais campos', failureType: 'apocalipse' }),
+    });
+
+    expect(foraDoSchema.diagnosis.usedFallback).toBe(true);
+    expect(foraDoSchema.diagnosis.modelErrorCategory).toBe('invalid_output');
+    expect(foraDoSchema.diagnosis.failureType).toBe('healthcheck');
   });
 });
 

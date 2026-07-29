@@ -22,6 +22,7 @@
     "ci": "npm run lint && npm run test && npm run build",
     "agent:analyze": "node automation/src/analyze-pipeline.mjs",
     "agent:fixture": "node automation/src/analyze-pipeline.mjs --fixture",
+    "openai:smoke": "node automation/src/openai-smoke-test.mjs",
     "docker:build": "docker build -t copa-figurinhas:local .",
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",

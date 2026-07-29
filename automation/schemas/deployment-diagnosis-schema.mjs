@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { CONFIDENCE_LEVELS, evidenceSchema } from './diagnosis-schema.mjs';
+import { CONFIDENCE_LEVELS, evidenceSchema, modelCallFields } from './diagnosis-schema.mjs';
 
 /**
  * A etapa analisada. Hoje só existe uma; o campo é explícito para que o
@@ -53,6 +53,8 @@ export const deploymentDiagnosisSchema = z.object({
   nextSteps: z.array(z.string()),
   limitations: z.array(z.string()),
   usedFallback: z.boolean(),
+  // Metadados da chamada — opcionais, não decidem nada. Ver `modelCallFields`.
+  ...modelCallFields,
   generatedAt: z.string().datetime(),
 });
 

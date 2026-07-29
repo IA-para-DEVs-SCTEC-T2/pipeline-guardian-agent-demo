@@ -38,6 +38,15 @@ import {
   classifyDeployment,
 } from './deployment-classifier.mjs';
 import { groundEvidenceAgainst } from './ground-evidence.mjs';
+import { callStructuredModel, classifyModelError, createOpenAIClient } from './openai-client.mjs';
+import {
+  PAYLOAD_LIMITS,
+  TRUNCATION_LIMITATION,
+  canUseModel,
+  capText,
+  emptyModelCallMetadata,
+  resolveOpenAIConfig,
+} from './openai-config.mjs';
 import { redactSecrets, redactSecretsDeep } from './redact-secrets.mjs';
 import { renderDeploymentDiagnosis } from './render-deployment-diagnosis.mjs';
 import { sanitizeLog } from './sanitize-log.mjs';
@@ -51,21 +60,13 @@ const PROMPT_PATH = join(AUTOMATION_ROOT, 'prompts', 'deployment-analysis.md');
 const MAX_LOG_LINES = 120;
 const MAX_EVIDENCE_ITEMS = 5;
 const MAX_EXCERPT_LENGTH = 240;
-const DEFAULT_MODEL_TIMEOUT_MS = 45_000;
 
 /** Linha que o smoke test grava no fim do log. */
 const VERDICT_PATTERN = new RegExp(`^${VERDICT_PREFIX}\\s*(PASS|FAIL)\\b`, 'm');
 
-/**
- * O agente pode usar o modelo? Exige as duas variáveis — sem qualquer uma
- * delas, o caminho é o fallback determinístico.
- *
- * @param {NodeJS.ProcessEnv} [env]
- * @returns {boolean}
- */
-export function canUseModel(env = process.env) {
-  return Boolean(env.OPENAI_API_KEY) && Boolean(env.OPENAI_MODEL);
-}
+// A regra de "pode usar o modelo?" é a mesma dos dois agentes e vive em
+// `openai-config.mjs`. Reexportada aqui para quem já importava daqui.
+export { canUseModel };
 
 /**
  * De onde vem o `status` TÉCNICO, em ordem de precedência:
@@ -213,12 +214,18 @@ export function buildDeploymentEvidence({ classification, context }) {
 }
 
 /**
- * Payload enviado ao modelo: já mascarado e restrito ao necessário.
+ * Payload enviado ao modelo: já mascarado, restrito ao necessário e limitado em
+ * tamanho.
  *
  * @param {object} input
- * @returns {string} JSON
+ * @returns {{ payload: string, limitations: string[] }}
  */
-export function buildDeploymentModelPayload({ context, classification }) {
+export function buildDeploymentModelRequest({ context, classification }) {
+  const limitations = [];
+
+  const log = capText(context.log, PAYLOAD_LIMITS.maxLogChars);
+  if (log.truncated) limitations.push(TRUNCATION_LIMITATION);
+
   const payload = {
     deployment: {
       repository: context.metadata.repository,
@@ -228,7 +235,7 @@ export function buildDeploymentModelPayload({ context, classification }) {
       // Fato, não opinião: o modelo recebe isto para descrever, não para revisar.
       technicalStatus: context.status,
     },
-    smokeTestLog: context.log,
+    smokeTestLog: log.text,
     deterministicClassifier: {
       failureType: classification.failureType,
       confidence: classification.confidence,
@@ -238,38 +245,50 @@ export function buildDeploymentModelPayload({ context, classification }) {
     collectedLimitations: context.limitations,
   };
 
-  return redactSecrets(JSON.stringify(payload, null, 2));
+  const serialized = redactSecrets(JSON.stringify(payload, null, 2));
+  const capped = capText(serialized, PAYLOAD_LIMITS.maxTotalChars);
+  if (capped.truncated) limitations.push(TRUNCATION_LIMITATION);
+
+  return { payload: capped.text, limitations: unique(limitations) };
+}
+
+/**
+ * Só o texto do payload. Mantida para quem já usava esta forma.
+ *
+ * @param {object} input
+ * @returns {string} JSON
+ */
+export function buildDeploymentModelPayload({ context, classification }) {
+  return buildDeploymentModelRequest({ context, classification }).payload;
 }
 
 /**
  * Chama a Responses API com saída estruturada validada por Zod.
  *
  * @param {object} input
- * @returns {Promise<object>} objeto conforme `modelDeploymentDiagnosisSchema`
+ * @returns {Promise<{ modelDiagnosis: object, metadata: object, limitations: string[] }>}
  */
-export async function analyzeWithModel({ context, classification, env = process.env, client = null }) {
-  const openai = client ?? (await createClient(env));
-  const instructions = readFileSync(PROMPT_PATH, 'utf8');
-  const { zodTextFormat } = await import('openai/helpers/zod');
+export async function analyzeWithModel({
+  context,
+  classification,
+  env = process.env,
+  client = null,
+  config = null,
+}) {
+  const resolved = config ?? resolveOpenAIConfig(env);
+  const openai = client ?? (await createOpenAIClient({ env, config: resolved }));
+  const { payload, limitations } = buildDeploymentModelRequest({ context, classification });
 
-  const response = await openai.responses.parse({
-    model: env.OPENAI_MODEL,
-    instructions,
-    input: [{ role: 'user', content: buildDeploymentModelPayload({ context, classification }) }],
-    text: { format: zodTextFormat(modelDeploymentDiagnosisSchema, 'deployment_diagnosis') },
+  const { parsed, metadata } = await callStructuredModel({
+    client: openai,
+    config: resolved,
+    instructions: readFileSync(PROMPT_PATH, 'utf8'),
+    input: payload,
+    schema: modelDeploymentDiagnosisSchema,
+    schemaName: 'deployment_diagnosis',
   });
 
-  if (response.status === 'incomplete') {
-    throw new Error(`resposta incompleta: ${response.incomplete_details?.reason ?? 'motivo desconhecido'}`);
-  }
-
-  const parsed = response.output_parsed;
-  if (!parsed) {
-    throw new Error('resposta do modelo sem saída estruturada');
-  }
-
-  // Valida de novo do nosso lado: nunca confiar na forma do que veio da rede.
-  return modelDeploymentDiagnosisSchema.parse(parsed);
+  return { modelDiagnosis: parsed, metadata, limitations };
 }
 
 /**
@@ -351,27 +370,46 @@ export async function analyzeDeployment({
     limitations: context.limitations,
   });
 
+  const config = resolveOpenAIConfig(env);
+
   let core = deterministic;
   let usedFallback = true;
-  let fallbackNote =
-    'Sem `OPENAI_API_KEY`/`OPENAI_MODEL`: diagnóstico produzido pelo classificador determinístico.';
+  let modelCall = emptyModelCallMetadata(config);
+  let fallbackNote = 'Sem `OPENAI_API_KEY`: diagnóstico produzido pelo classificador determinístico.';
+  let payloadLimitations = [];
 
-  if (canUseModel(env)) {
+  if (config.enabled) {
     try {
-      const modelDiagnosis = await analyzeWithModel({ context, classification, env, client });
-      core = mergeModelDeploymentDiagnosis({ modelDiagnosis, deterministic, context });
+      const result = await analyzeWithModel({ context, classification, env, client, config });
+      core = mergeModelDeploymentDiagnosis({
+        modelDiagnosis: result.modelDiagnosis,
+        deterministic,
+        context,
+      });
+      payloadLimitations = result.limitations;
+      modelCall = result.metadata;
       usedFallback = false;
       fallbackNote = null;
     } catch (error) {
-      // Erro de rede, chave inválida, recusa ou saída fora do schema: a falha
-      // do modelo não pode esconder a falha do deployment.
-      fallbackNote = `Falha na análise com modelo (${redactSecrets(String(error.message))}): usado o classificador determinístico.`;
+      // Erro de rede, chave inválida, timeout, recusa ou saída fora do schema:
+      // a falha do modelo não pode esconder a falha do deployment. Só a
+      // categoria é publicada; a mensagem bruta do SDK, nunca.
+      const category = classifyModelError(error);
+      fallbackNote =
+        `Falha na análise com modelo (categoria: \`${category}\`): a análise com o modelo não ` +
+        'foi concluída; foi utilizado o classificador determinístico.';
+      modelCall = emptyModelCallMetadata(config, category);
       core = deterministic;
       usedFallback = true;
     }
   }
 
-  const limitations = unique([...core.limitations, ...(fallbackNote ? [fallbackNote] : [])]);
+  const limitations = unique([
+    ...core.limitations,
+    ...payloadLimitations,
+    ...config.notes,
+    ...(fallbackNote ? [fallbackNote] : []),
+  ]);
 
   const diagnosis = deploymentDiagnosisSchema.parse(
     redactSecretsDeep({
@@ -391,6 +429,7 @@ export async function analyzeDeployment({
       nextSteps: core.nextSteps,
       limitations,
       usedFallback,
+      ...modelCall,
       generatedAt: now().toISOString(),
     }),
   );
@@ -483,6 +522,10 @@ async function main() {
       `  tipo ............ ${diagnosis.failureType}\n` +
       `  confiança ....... ${diagnosis.confidence}\n` +
       `  fallback ........ ${diagnosis.usedFallback}\n` +
+      `  modelo .......... ${diagnosis.model ?? 'n/d'}` +
+      `${diagnosis.modelErrorCategory ? ` (falha: ${diagnosis.modelErrorCategory})` : ''}\n` +
+      `  latência ........ ${diagnosis.modelLatencyMs === null || diagnosis.modelLatencyMs === undefined ? 'n/d' : `${diagnosis.modelLatencyMs} ms`}\n` +
+      `  tokens .......... ${diagnosis.modelUsage?.totalTokens ?? 'n/d'}\n` +
       `  JSON ............ ${jsonPath}\n` +
       `  Markdown ........ ${markdownPath}\n\n` +
       '  O diagnóstico é INFORMATIVO. Quem reprova o deployment é o smoke test.\n',
@@ -515,15 +558,6 @@ function readTargetHost({ resultFile, env }) {
   } catch {
     return 'unknown';
   }
-}
-
-async function createClient(env) {
-  const { default: OpenAI } = await import('openai');
-  return new OpenAI({
-    apiKey: env.OPENAI_API_KEY,
-    timeout: Number(env.OPENAI_TIMEOUT_MS ?? DEFAULT_MODEL_TIMEOUT_MS),
-    maxRetries: 1,
-  });
 }
 
 function unique(values) {

@@ -1,6 +1,13 @@
 import { describe, it, expect } from 'vitest';
 
-import { detectSecrets, redactSecrets, redactSecretsDeep, REDACTED } from '../src/redact-secrets.mjs';
+import {
+  detectSecrets,
+  isUsageMetric,
+  redactCredentialMaterial,
+  redactSecrets,
+  redactSecretsDeep,
+  REDACTED,
+} from '../src/redact-secrets.mjs';
 import { readFixtureLog } from '../src/simulate-failure.mjs';
 
 describe('redactSecrets: categorias de segredo', () => {
@@ -85,6 +92,96 @@ describe('redactSecrets: categorias de segredo', () => {
   it('é idempotente: redigir duas vezes não muda o resultado', () => {
     const once = redactSecrets('OPENAI_API_KEY=sk-abcdef1234567890');
     expect(redactSecrets(once)).toBe(once);
+  });
+});
+
+describe('métrica de uso não é credencial', () => {
+  // Regressão: o relatório escreve `Tokens: 1.300` para o consumo da chamada à
+  // OpenAI. A regra de `token: valor` mascarava o número, e o relatório perdia
+  // justamente a informação que ele existe para dar.
+  const preservados = [
+    'Tokens: 1.300',
+    'Tokens: —',
+    '- Tokens: 1.300 (entrada 1.000 · saída 300 · raciocínio 120)',
+    'entrada 1.000',
+    'saída 300',
+    'raciocínio 120',
+    'inputTokens: 1000',
+    'outputTokens: 300',
+    'reasoningTokens: 120',
+    'totalTokens: 1300',
+    '"totalTokens": "1300"',
+    'total_tokens=1300',
+  ];
+
+  for (const input of preservados) {
+    it(`preserva \`${input}\``, () => {
+      expect(redactSecrets(input)).toBe(input);
+      expect(redactSecrets(input)).not.toContain(REDACTED);
+    });
+  }
+
+  const redigidos = [
+    ['OPENAI_API_KEY=sk-segredo-de-verdade-123456', 'sk-segredo-de-verdade-123456'],
+    ['GITHUB_TOKEN=ghp_segredoDeVerdade1234567890', 'ghp_segredoDeVerdade1234567890'],
+    ['AUTH_TOKEN=valor-secreto-real', 'valor-secreto-real'],
+    ['access_token: 9f8e7d6c5b4a3210', '9f8e7d6c5b4a3210'],
+    ['Authorization: Bearer segredo-de-verdade', 'segredo-de-verdade'],
+    ['token: segredo-real', 'segredo-real'],
+    ['tokens: segredo-real-nao-numerico', 'segredo-real-nao-numerico'],
+    // Nome no singular: continua sendo credencial, mesmo com valor numérico.
+    ['token: 123456', '123456'],
+    ['password: 123456', '123456'],
+  ];
+
+  for (const [input, secret] of redigidos) {
+    it(`continua redigindo \`${input}\``, () => {
+      const output = redactSecrets(input);
+
+      expect(output).not.toContain(secret);
+      expect(output).toContain(REDACTED);
+    });
+  }
+
+  it('exige nome no plural E valor numérico para abrir exceção', () => {
+    expect(isUsageMetric('Tokens', '1.300')).toBe(true);
+    expect(isUsageMetric('totalTokens', '1300')).toBe(true);
+    expect(isUsageMetric('Tokens', '—')).toBe(true);
+    expect(isUsageMetric('token', '1300')).toBe(false);
+    expect(isUsageMetric('access_token', '1300')).toBe(false);
+    expect(isUsageMetric('Tokens', 'ghp_abc123')).toBe(false);
+    expect(isUsageMetric('password', '123456')).toBe(false);
+  });
+
+  it('não acusa incidente de segurança por causa de uma métrica de uso', () => {
+    // Um log que imprime `Tokens: 1.300` não pode reprovar o pipeline como
+    // vazamento de credencial.
+    expect(detectSecrets('uso da chamada — Tokens: 1.300')).toEqual([]);
+    expect(detectSecrets('token: segredo-real').length).toBeGreaterThan(0);
+  });
+});
+
+describe('redactCredentialMaterial: a última barreira', () => {
+  it('pega segredo pela forma do valor', () => {
+    const cases = [
+      ['chave: sk-abcdef1234567890', 'sk-abcdef1234567890'],
+      ['push com ghp_9AbCdEfGhIjKlMnOpQrStUvWxYz012345', 'ghp_9AbCdEfGhIjKlMnOpQrStUvWxYz012345'],
+      ['usando github_pat_11ABCDEFG0aBcDeFgHiJkLmNoPqRsTuVwXyZ', 'github_pat_11ABCDEFG0aBcDeFgHiJkLmNoPqRsTuVwXyZ'],
+      ['Authorization: Bearer eyJhbGciOiJIUzI1NiJ9', 'eyJhbGciOiJIUzI1NiJ9'],
+      ['https://ci-bot:S3nh4-Sup3r@registry.exemplo.com', 'S3nh4-Sup3r'],
+      ['Set-Cookie: session_id=8f3ab1c2d4e5f6a7b8c9', '8f3ab1c2d4e5f6a7b8c9'],
+    ];
+
+    for (const [input, secret] of cases) {
+      const output = redactCredentialMaterial(input);
+      expect(output).not.toContain(secret);
+      expect(output).toContain(REDACTED);
+    }
+  });
+
+  it('não toca em rótulo de relatório', () => {
+    const markdown = '- Tokens: 1.300 (entrada 1.000 · saída 300 · raciocínio 120)';
+    expect(redactCredentialMaterial(markdown)).toBe(markdown);
   });
 });
 

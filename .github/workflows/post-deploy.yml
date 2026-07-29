@@ -201,10 +201,32 @@ jobs:
           GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
           APP_BASE_URL: ${{ vars.APP_BASE_URL }}
 
-          # Opcionais. Sem eles, o fallback determinístico assume e o
-          # diagnóstico continua sendo produzido (`usedFallback: true`).
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          # A chave só é entregue quando a origem da execução é confiável:
+          # disparo manual (exige permissão de escrita no repositório) ou um
+          # `workflow_run` de CI aprovado, vindo de um push na `main`.
+          #
+          # `workflow_run` roda no contexto do repositório base e enxerga os
+          # secrets mesmo quando o CI que o disparou veio de um fork. A condição
+          # abaixo é o que impede que código não confiável chegue perto da
+          # chave — e é também por isso que este workflow não usa
+          # `pull_request_target` nem faz checkout de head de PR.
+          #
+          # Quando a condição não vale, a variável chega vazia: o agente cai no
+          # classificador determinístico e o diagnóstico continua saindo
+          # (`usedFallback: true`). Perde-se a explicação, não a validação.
+          OPENAI_API_KEY: >-
+            ${{
+              (github.event_name == 'workflow_dispatch' ||
+               (github.event.workflow_run.conclusion == 'success' &&
+                github.event.workflow_run.event == 'push' &&
+                github.event.workflow_run.head_branch == 'main'))
+              && secrets.OPENAI_API_KEY || '' }}
+
+          # Configuração, não segredo. Vazias, valem os padrões resolvidos em
+          # `openai-config.mjs` (`gpt-5-mini`, `low`, `2000`).
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT }}
+          OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS }}
         run: node automation/src/analyze-deployment.mjs
 
       - name: Publicar diagnóstico no Job Summary

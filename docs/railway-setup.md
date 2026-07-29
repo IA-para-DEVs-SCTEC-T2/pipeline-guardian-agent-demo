@@ -91,8 +91,12 @@ Não defina:
 - **`COMMIT_SHA`** — o Railway expõe `RAILWAY_GIT_COMMIT_SHA` automaticamente, e
   a aplicação usa esse valor como fallback.
 
-Nenhuma chave da OpenAI vai para o Railway: o modelo é usado no GitHub Actions,
-não dentro da aplicação.
+**Não cadastre `OPENAI_API_KEY` aqui.** O container da CopaFigurinhas não chama
+a OpenAI: quem chama são os workflows do GitHub (jobs de diagnóstico) e os
+scripts locais de `automation/`. Uma chave no Railway seria superfície de
+exposição sem nenhum uso — mais um lugar de onde vazar, zero funcionalidade a
+mais. O mesmo vale para `OPENAI_MODEL` e companhia: são configuração da
+automação, não da aplicação.
 
 ### 6. Gerar o domínio público
 
@@ -123,6 +127,21 @@ No repositório: **Settings › Secrets and variables › Actions › Variables*
 
 É uma **variável**, não um secret: é um endereço público, e mantê-la como
 variável permite que o log do workflow mostre contra o que ele testou.
+
+Se quiser o diagnóstico com modelo no pós-deployment, cadastre também — no mesmo
+lugar, mas na aba certa:
+
+| Aba           | Nome                       | Obrigatório | Observação                    |
+| ------------- | -------------------------- | ----------- | ----------------------------- |
+| **Secrets**   | `OPENAI_API_KEY`           | não         | única que é segredo           |
+| **Variables** | `OPENAI_MODEL`             | não         | padrão no código: `gpt-5-mini` |
+| **Variables** | `OPENAI_REASONING_EFFORT`  | não         | padrão no código: `low`        |
+| **Variables** | `OPENAI_MAX_OUTPUT_TOKENS` | não         | padrão no código: `2000`       |
+
+Sem o secret, o job `deployment-diagnosis` continua rodando e produzindo
+diagnóstico pelo classificador determinístico. Ele é o **único** job deste fluxo
+que recebe a chave — `post-deploy-smoke-test` e `cd-gate`, que são quem de fato
+aprova ou reprova, não a veem.
 
 > Nunca escreva a URL dentro do YAML e nunca versione token algum.
 
