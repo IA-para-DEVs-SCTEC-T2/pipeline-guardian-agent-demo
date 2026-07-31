@@ -51,6 +51,51 @@ export const CAUSE_STRENGTH_LABELS = {
 
 export const CONFIDENCE_LABELS = { low: '🔴 baixa', medium: '🟡 média', high: '🟢 alta' };
 
+/**
+ * Símbolo **e** texto para cada situação de etapa.
+ *
+ * Os dois juntos, sempre. Cor é reforço; o relatório precisa continuar legível
+ * impresso em preto e branco, lido por quem não distingue verde de vermelho e
+ * colado como texto puro numa mensagem. Um `✗` sozinho não sobrevive a nada
+ * disso — `✗ FAILURE` sobrevive aos três.
+ */
+export const STAGE_STATUS_SYMBOLS = {
+  success: '✓',
+  failure: '✗',
+  not_reached: '—',
+  skipped: '○',
+  unknown: '?',
+};
+
+export const STAGE_STATUS_TEXT = {
+  success: 'SUCCESS',
+  failure: 'FAILURE',
+  not_reached: 'NOT REACHED',
+  skipped: 'SKIPPED',
+  unknown: 'UNKNOWN',
+};
+
+export const GATE_STATUS_LABELS = {
+  approved: '✅ aprovado',
+  rejected: '❌ reprovado',
+  not_reached: '— não alcançado',
+  unknown: '❔ indeterminado',
+};
+
+export const GATE_TYPE_LABELS = { ci: 'CI Gate', cd: 'CD Gate' };
+
+/**
+ * Uma linha da linha do tempo, no formato `✓ SUCCESS  Lint`.
+ *
+ * @param {{ label: string, status: string }} stage
+ * @returns {string}
+ */
+export function stageLine(stage) {
+  const symbol = STAGE_STATUS_SYMBOLS[stage.status] ?? '?';
+  const text = STAGE_STATUS_TEXT[stage.status] ?? 'UNKNOWN';
+  return `${symbol} ${text.padEnd(11)} ${stage.label}`;
+}
+
 export const CORRELATION_LABELS = {
   matched: 'correspondente',
   partial: 'parcial',
@@ -73,9 +118,10 @@ export const COVERAGE_ROWS = [
 /**
  * @param {object} diagnosis diagnóstico validado por `operationalDiagnosisSchema`
  * @param {object} [context] contexto operacional (para a linha do tempo)
+ * @param {object} [execution] execução validada por `pipelineExecutionSchema`
  * @returns {string} relatório em Markdown
  */
-export function renderOperationalReport(diagnosis, context = null) {
+export function renderOperationalReport(diagnosis, context = null, execution = null) {
   const lines = [];
   const status = diagnosis.technicalStatus;
 
@@ -100,6 +146,10 @@ export function renderOperationalReport(diagnosis, context = null) {
   lines.push(`- Deployment ID: \`${safe(diagnosis.deploymentId ?? 'não informado')}\``);
   lines.push(`- Gerado em: ${safe(diagnosis.generatedAt)}`);
   lines.push('');
+
+  /* ---- Linha do tempo da execução ---------------------------------------- */
+
+  lines.push(...renderExecutionSection(execution));
 
   /* ---- Fase afetada ------------------------------------------------------ */
 
@@ -272,6 +322,122 @@ export function renderOperationalReport(diagnosis, context = null) {
   lines.push('');
 
   return redactCredentialMaterial(lines.join('\n'));
+}
+
+/**
+ * A linha do tempo por etapa, o resumo do sucesso e a explicação da falha.
+ *
+ * Os três num bloco só porque são a mesma decisão vista de ângulos diferentes:
+ * `overallStatus` escolhe entre resumir e explicar, e a linha do tempo é o que
+ * mostra **onde** o fluxo parou nos dois casos.
+ *
+ * Sem `execution` (relatório gerado por uma versão anterior, ou renderização
+ * isolada nos testes), o bloco simplesmente não sai — o restante do relatório
+ * continua o que sempre foi.
+ *
+ * @param {object|null} execution
+ * @returns {string[]}
+ */
+function renderExecutionSection(execution) {
+  if (!execution) return [];
+
+  const lines = [];
+  const failed = execution.overallStatus === 'failure';
+
+  lines.push('## Linha do tempo da execução');
+  lines.push('');
+  lines.push('```text');
+  for (const stage of execution.stages) {
+    const marker = failed && stage.stage === execution.firstFailedStage ? '   ← primeira falha' : '';
+    lines.push(`${stageLine(stage)}${marker}`);
+  }
+  lines.push('```');
+  lines.push('');
+  lines.push(
+    `Gate ${GATE_TYPE_LABELS[execution.gate.type] ?? execution.gate.type}: ` +
+      `**${GATE_STATUS_LABELS[execution.gate.status] ?? execution.gate.status}** ` +
+      `(\`${execution.gate.status}\`, determinado por regra técnica).`,
+  );
+  lines.push('');
+
+  if (!failed) {
+    if (execution.successSummary) {
+      lines.push('## Resumo');
+      lines.push('');
+      lines.push(safe(execution.successSummary));
+      lines.push('');
+    }
+    return lines;
+  }
+
+  const explanation = execution.failureExplanation;
+  if (!explanation) return lines;
+
+  lines.push('## Explicação da falha');
+  lines.push('');
+  lines.push(`### Etapa afetada`);
+  lines.push('');
+  lines.push(`\`${explanation.stage}\` — ${safe(explanation.label)}`);
+  lines.push('');
+  lines.push('### O que aconteceu');
+  lines.push('');
+  lines.push(`**[EXPLICAÇÃO]** ${safe(explanation.whatHappened)}`);
+  lines.push('');
+  lines.push('### Evidências');
+  lines.push('');
+  if (explanation.evidenceIds.length === 0) {
+    lines.push('_Nenhuma evidência ancorada para esta etapa._');
+  } else {
+    lines.push(
+      `**[FATO]** ${explanation.evidenceIds.map((id) => `\`${safe(id)}\``).join(', ')} — ` +
+        'os trechos correspondentes estão na seção _Fatos observados_.',
+    );
+  }
+  lines.push('');
+  lines.push('### Causa provável');
+  lines.push('');
+  lines.push(
+    explanation.probableCause
+      ? `**[CAUSA PROVÁVEL]** ${safe(explanation.probableCause)} ` +
+          `(força: ${CAUSE_STRENGTH_LABELS[explanation.causeStrength]})`
+      : '_O material mostra o sintoma, não a causa: nenhuma causa foi estabelecida._',
+  );
+  lines.push('');
+  lines.push('### Ações recomendadas');
+  lines.push('');
+  if (explanation.recommendedActions.length === 0) {
+    lines.push('_Nenhuma ação sugerida._');
+  } else {
+    explanation.recommendedActions.forEach((action, index) =>
+      lines.push(`${index + 1}. **[AÇÃO RECOMENDADA]** ${safe(action)}`),
+    );
+  }
+  lines.push('');
+  lines.push(`### Confiança`);
+  lines.push('');
+  lines.push(`${CONFIDENCE_LABELS[explanation.confidence] ?? explanation.confidence}`);
+  lines.push('');
+  lines.push('### Limitações desta explicação');
+  lines.push('');
+  if (explanation.limitations.length === 0) {
+    lines.push('_Nenhuma limitação declarada._');
+  } else {
+    for (const limitation of explanation.limitations) {
+      lines.push(`- **[LIMITAÇÃO]** ${safe(limitation)}`);
+    }
+  }
+  lines.push('');
+  lines.push('### Etapas não alcançadas');
+  lines.push('');
+  lines.push(
+    explanation.notReachedStages.length === 0
+      ? '_Nenhuma: todas as etapas posteriores chegaram a executar._'
+      : `${explanation.notReachedStages.map((label) => safe(label)).join(', ')} — ` +
+          'não são falhas independentes: nunca começaram.',
+  );
+  lines.push('');
+
+  return lines;
 }
 
 /**

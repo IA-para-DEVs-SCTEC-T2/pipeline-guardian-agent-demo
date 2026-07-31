@@ -14,18 +14,23 @@ duas estarem certas, desde que consigam apontar em que fato se apoiam.
 
 1. **Um log bruto selecionado** — `reports/evidence/ci/tests.log`,
    `reports/railway/runtime.jsonl` ou `reports/deployment.log`.
-2. **O relatório HTML** — `operational-deployment-report.html`, do artefato
-   `operational-deployment-report-<sha>` da execução do workflow
-   **Post-deploy validation**.
-3. **O diagnóstico da IA** — as seções *Fatos observados*, *Inferências*,
-   *Causa provável*, *Recomendações* e *Limitações* do mesmo relatório.
+2. **O relatório HTML** — `pipeline-execution-report.html`, do artefato
+   `pipeline-execution-report-<sha>` (falha de CI: workflow **CI**; falha de CD:
+   workflow **Post-deploy validation**, onde ele também sai como
+   `operational-deployment-report-<sha>`).
+3. **O diagnóstico da IA** — as seções *Explicação da falha*, *Fatos observados*,
+   *Inferências*, *Causa provável*, *Recomendações* e *Limitações* do mesmo
+   relatório.
 
 Sem acesso ao GitHub Actions? Gere tudo localmente, sem Railway e sem OpenAI:
 
 ```bash
-npm run operational:fixture -- functional-failure
-open reports/operational-deployment-report.html
+npm run pipeline:fixture -- cd-functional-failure
+open reports/pipeline-execution-report.html
 ```
+
+Os outros quatro cenários: `success`, `ci-lint-failure`, `ci-tests-failure` e
+`ci-docker-failure`.
 
 ---
 
@@ -37,9 +42,15 @@ inteira depende de você conseguir distinguí-las:
 | Categoria         | Como reconhecer                                              | No relatório |
 | ----------------- | ------------------------------------------------------------ | ------------ |
 | **Fato**          | Está **literalmente** no log. Dá para apontar a linha.       | `[FATO]`     |
-| **Hipótese**      | **Não** está no log. Alguém deduziu a partir dos fatos.       | `[INFERÊNCIA]` e *Causa provável* |
-| **Recomendação**  | Uma ação a executar. Não é verdadeira nem falsa — é útil ou não. | `[RECOMENDAÇÃO]` |
+| **Hipótese**      | **Não** está no log. Alguém deduziu a partir dos fatos.       | `[INFERÊNCIA]`, `[EXPLICAÇÃO]` e `[CAUSA PROVÁVEL]` |
+| **Recomendação**  | Uma ação a executar. Não é verdadeira nem falsa — é útil ou não. | `[AÇÃO RECOMENDADA]` e `[RECOMENDAÇÃO]` |
 | **Limitação**     | O que **não** foi possível verificar, e por quê.              | `[LIMITAÇÃO]` |
+
+Uma quinta coisa não é nenhuma das quatro e vem antes de todas: a **linha do
+tempo da execução**, com a etapa marcada como `primeira falha`. Ela não é
+opinião da IA — é resultado de regra, a partir dos exit codes dos jobs e dos
+códigos HTTP. É o ponto fixo contra o qual você vai avaliar tudo o que a IA
+escreveu.
 
 > ⚠️ O teste decisivo: se você **não consegue apontar a linha do log**, não é
 > fato. Por mais convincente que a frase seja.
@@ -150,10 +161,15 @@ Três perguntas para a turma:
 Para evitar confusão com os próximos dias:
 
 - não é uma competição, e não há placar;
-- não envolve detectar anomalia, calcular baseline nem prever falha — isso é
+- não envolve comparar esta execução com outras nem calcular padrão — isso é
   assunto do **Dia 2**;
-- não envolve corrigir o código, fazer rollback nem promover ambiente — isso é
-  assunto do **Dia 3**.
+- não envolve olhar o histórico nem estimar o que pode acontecer depois — isso é
+  assunto do **Dia 3**;
+- não envolve corrigir o código, fazer rollback nem promover ambiente.
+
+Hoje o material é **uma** execução e os logs dela. É por isso que nenhuma
+pergunta desta atividade pede para comparar com "o normal": nada aqui sabe o que
+é o normal, e o relatório não finge saber.
 
 Hoje o exercício é de **leitura**: distinguir fato de hipótese num relatório
 gerado automaticamente. É a habilidade de que tudo o que vem depois depende.

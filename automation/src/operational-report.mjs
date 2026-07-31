@@ -32,15 +32,45 @@ import {
   collectOperationalContextFromDisk,
   writeOperationalContext,
 } from './collect-operational-context.mjs';
+import { buildPipelineExecution } from './pipeline-execution.mjs';
 import { fromJsonl } from './railway-log-parser.mjs';
 import { redactSecrets } from './redact-secrets.mjs';
 import { renderOperationalHtml } from './render-operational-html.mjs';
 import { renderOperationalReport } from './render-operational-report.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const AUTOMATION_ROOT = resolve(HERE, '..');
+export const AUTOMATION_ROOT = resolve(HERE, '..');
 export const REPO_ROOT = resolve(AUTOMATION_ROOT, '..');
-export const FIXTURES_ROOT = join(REPO_ROOT, 'samples', 'operational');
+export const FIXTURES_ROOT = join(REPO_ROOT, 'samples', 'pipeline-executions');
+
+/**
+ * Os cinco cenários do Dia 1, na ordem em que a aula os apresenta.
+ *
+ * A lista existe para **documentar e validar**; quem enumera o disco é
+ * `listFixtures`. Uma pasta nova em `samples/pipeline-executions/` continua
+ * aparecendo sozinha.
+ */
+export const DAY_1_SCENARIOS = [
+  'success',
+  'ci-lint-failure',
+  'ci-tests-failure',
+  'ci-docker-failure',
+  'cd-functional-failure',
+];
+
+/**
+ * Nomes antigos que continuam funcionando.
+ *
+ * `samples/operational/functional-failure/` virou
+ * `samples/pipeline-executions/cd-functional-failure/` quando os cinco cenários
+ * passaram a viver juntos. Quebrar `npm run operational:fixture --
+ * functional-failure` quebraria a documentação impressa da turma no meio da
+ * aula — o alias custa uma linha.
+ */
+export const FIXTURE_ALIASES = { 'functional-failure': 'cd-functional-failure' };
+
+/** Os dois nomes de arquivo do relatório. Ver `writeOperationalReports`. */
+export const REPORT_BASENAMES = ['operational-deployment-report', 'pipeline-execution-report'];
 
 /** Arquivos que um cenário pode ter. Todos opcionais — ausência vira limitação. */
 export const FIXTURE_FILES = {
@@ -64,10 +94,19 @@ export const FIXTURE_FILES = {
  */
 export function listFixtures() {
   if (!existsSync(FIXTURES_ROOT)) return [];
-  return readdirSync(FIXTURES_ROOT, { withFileTypes: true })
+
+  const directories = readdirSync(FIXTURES_ROOT, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+    .map((entry) => entry.name);
+
+  // Os aliases entram na listagem porque a listagem é o que o erro de "cenário
+  // não encontrado" imprime: esconder um nome que funciona seria dizer à pessoa
+  // que ela digitou errado quando não digitou.
+  const aliases = Object.keys(FIXTURE_ALIASES).filter((alias) =>
+    directories.includes(FIXTURE_ALIASES[alias]),
+  );
+
+  return [...new Set([...directories, ...aliases])].sort();
 }
 
 /**
@@ -78,7 +117,8 @@ export function listFixtures() {
  * @returns {object} contexto operacional
  */
 export function loadFixtureContext(name, { root = FIXTURES_ROOT } = {}) {
-  const directory = join(resolve(root), name);
+  const resolvedName = FIXTURE_ALIASES[name] ?? name;
+  const directory = join(resolve(root), resolvedName);
 
   if (!existsSync(directory)) {
     const available = listFixtures();
@@ -142,24 +182,73 @@ export function loadFixtureContext(name, { root = FIXTURES_ROOT } = {}) {
 }
 
 /**
- * Grava os três relatórios.
+ * O escopo do relatório, deduzido do material coletado.
+ *
+ * Sem log de smoke test não houve validação pós-deployment: o relatório é de
+ * **CI**, e as etapas de CD entram como `not_reached` em vez de `unknown`. É a
+ * diferença entre "não sei" e "ainda não aconteceu".
+ *
+ * @param {object} context
+ * @returns {'ci'|'cd'}
+ */
+export function inferScope(context) {
+  return context?.sourceCoverage?.smokeTest ? 'cd' : 'ci';
+}
+
+/**
+ * Grava os relatórios — JSON, Markdown e HTML, sob **dois** nomes.
+ *
+ * `operational-deployment-report.*` é o nome que a documentação, os artefatos e
+ * o Job Summary do pós-deployment já usam; `pipeline-execution-report.*` é o
+ * nome único dos dois fluxos (CI e CD). Gravar os dois é o que permite
+ * renomear sem quebrar nada que já aponta para o antigo — e o conteúdo é
+ * byte a byte o mesmo, gerado uma vez só.
+ *
+ * O JSON traz o diagnóstico **e** a execução (`pipelineExecution`): quem já lia
+ * `technicalStatus` continua lendo, e quem quer as etapas tem onde olhar.
  *
  * @param {object} input
- * @returns {{ jsonPath: string, markdownPath: string, htmlPath: string }}
+ * @returns {{ jsonPath: string, markdownPath: string, htmlPath: string, paths: string[] }}
  */
-export function writeOperationalReports({ diagnosis, context, outDir = join(REPO_ROOT, 'reports') }) {
+export function writeOperationalReports({
+  diagnosis,
+  context,
+  execution = null,
+  outDir = join(REPO_ROOT, 'reports'),
+  basenames = REPORT_BASENAMES,
+}) {
   const directory = resolve(outDir);
   mkdirSync(directory, { recursive: true });
 
-  const jsonPath = join(directory, 'operational-deployment-report.json');
-  const markdownPath = join(directory, 'operational-deployment-report.md');
-  const htmlPath = join(directory, 'operational-deployment-report.html');
+  const resolvedExecution =
+    execution ?? buildPipelineExecution({ diagnosis, context, scope: inferScope(context) });
 
-  writeFileSync(jsonPath, `${JSON.stringify(diagnosis, null, 2)}\n`, 'utf8');
-  writeFileSync(markdownPath, renderOperationalReport(diagnosis, context), 'utf8');
-  writeFileSync(htmlPath, renderOperationalHtml(diagnosis, context), 'utf8');
+  const json = `${JSON.stringify({ ...diagnosis, pipelineExecution: resolvedExecution }, null, 2)}\n`;
+  const markdown = renderOperationalReport(diagnosis, context, resolvedExecution);
+  const html = renderOperationalHtml(diagnosis, context, resolvedExecution);
 
-  return { jsonPath, markdownPath, htmlPath };
+  const paths = [];
+  for (const basename of basenames) {
+    const jsonPath = join(directory, `${basename}.json`);
+    const markdownPath = join(directory, `${basename}.md`);
+    const htmlPath = join(directory, `${basename}.html`);
+
+    writeFileSync(jsonPath, json, 'utf8');
+    writeFileSync(markdownPath, markdown, 'utf8');
+    writeFileSync(htmlPath, html, 'utf8');
+
+    paths.push(jsonPath, markdownPath, htmlPath);
+  }
+
+  const [primary] = basenames;
+
+  return {
+    jsonPath: join(directory, `${primary}.json`),
+    markdownPath: join(directory, `${primary}.md`),
+    htmlPath: join(directory, `${primary}.html`),
+    execution: resolvedExecution,
+    paths,
+  };
 }
 
 /* ------------------------------------------------------------------------- */
@@ -202,9 +291,16 @@ async function main() {
       });
 
   const { diagnosis } = await analyzeOperational({ context, env });
+  const scope = env.PIPELINE_REPORT_SCOPE || inferScope(context);
+  const execution = buildPipelineExecution({ diagnosis, context, scope });
 
   writeOperationalContext({ context, outDir });
-  const { jsonPath, markdownPath, htmlPath } = writeOperationalReports({ diagnosis, context, outDir });
+  const { jsonPath, markdownPath, htmlPath } = writeOperationalReports({
+    diagnosis,
+    context,
+    execution,
+    outDir,
+  });
 
   const coverage = Object.entries(diagnosis.sourceCoverage)
     .map(([key, value]) => `${key}=${value ? 'sim' : 'não'}`)
@@ -213,9 +309,12 @@ async function main() {
   process.stdout.write(
     '[operational-report] relatório gerado\n' +
       `  cenário ......... ${options.fixture ?? 'execução real'}\n` +
-      `  resultado ....... ${diagnosis.technicalStatus.overall} ` +
+      `  escopo .......... ${execution.scope}\n` +
+      `  resultado ....... ${execution.overallStatus} ` +
       `(ci=${diagnosis.technicalStatus.ci} railway=${diagnosis.technicalStatus.railwayDeployment} ` +
       `smoke=${diagnosis.technicalStatus.smokeTest})\n` +
+      `  primeira falha .. ${execution.firstFailedStage ?? 'nenhuma'}\n` +
+      `  gate ............ ${execution.gate.type}=${execution.gate.status}\n` +
       `  fase afetada .... ${diagnosis.affectedPhase}\n` +
       `  correlação ...... ${diagnosis.correlationStatus} ` +
       `(esperado ${String(diagnosis.expectedCommitSha).slice(0, 7)}, ` +

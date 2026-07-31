@@ -1,0 +1,8 @@
+{
+  "repository": "senai/copa-figurinhas",
+  "commitSha": "d5e390a4c81b7f26039ade5c7148b0f92c6a3d17",
+  "quality": "success",
+  "tests": "success",
+  "build": "success",
+  "docker": "failure"
+}

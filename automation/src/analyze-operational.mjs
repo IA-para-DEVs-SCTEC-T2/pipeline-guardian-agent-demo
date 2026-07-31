@@ -276,6 +276,17 @@ export function mergeModelOperationalDiagnosis({ modelDiagnosis, deterministic, 
   let causeStrength = overall === 'success' ? 'unavailable' : model.causeStrength;
   if (causeStrength !== 'unavailable' && !probableCause) causeStrength = 'unavailable';
 
+  // Nem recomendação. Um modelo prestativo produz "considere monitorar X" para
+  // qualquer release verde; publicar isso ensina a turma a procurar problema
+  // onde os gates não encontraram nenhum.
+  const recommendedActions = overall === 'success' ? [] : model.recommendedActions;
+  if (overall === 'success' && model.recommendedActions.length > 0) {
+    limitations.push(
+      `${model.recommendedActions.length} recomendação(ões) do modelo foram descartadas: ` +
+        'os gates técnicos aprovaram esta release e não há problema a corrigir.',
+    );
+  }
+
   return {
     summary: model.summary,
     affectedPhase,
@@ -283,7 +294,7 @@ export function mergeModelOperationalDiagnosis({ modelDiagnosis, deterministic, 
     inferences: finalInferences,
     probableCause,
     causeStrength,
-    recommendedActions: model.recommendedActions,
+    recommendedActions,
     limitations: unique(limitations),
   };
 }

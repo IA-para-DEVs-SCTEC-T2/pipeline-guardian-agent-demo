@@ -325,11 +325,51 @@ aplicação passou a responder.
 ## 9. Analisar o relatório operacional (20 min)
 
 Ainda em **Post-deploy validation**, role até **Artifacts** e baixe
-`operational-deployment-report-<sha>`. Abra
-**`operational-deployment-report.html`** no navegador — é a saída principal do
-dia, e o arquivo é autônomo: funciona offline, sem CDN e sem servidor.
+`operational-deployment-report-<sha>` (ou `pipeline-execution-report-<sha>` — é
+o mesmo relatório, com dois nomes). Abra
+**`pipeline-execution-report.html`** no navegador — é a saída principal do dia,
+e o arquivo é autônomo: funciona offline, sem CDN e sem servidor.
 
 O Job Summary traz só o essencial e o link; o relatório inteiro está no HTML.
+
+### Comece pela linha do tempo
+
+A primeira seção do relatório é a **linha do tempo da execução**: as doze etapas
+do pipeline, na ordem real, cada uma com símbolo **e** texto.
+
+```text
+✓ SUCCESS     Lint
+✓ SUCCESS     Testes
+✓ SUCCESS     Build
+✓ SUCCESS     Docker
+✓ SUCCESS     CI Gate
+✓ SUCCESS     Railway Build
+✓ SUCCESS     Railway Deploy
+✓ SUCCESS     Inicialização
+✓ SUCCESS     Health check
+✓ SUCCESS     Rota funcional
+✓ SUCCESS     Smoke test
+✓ SUCCESS     CD Gate
+```
+
+Os cinco status significam coisas diferentes, e a diferença é o assunto do dia:
+
+| | | |
+| - | - | - |
+| `✓ SUCCESS`     | executou e passou | |
+| `✗ FAILURE`     | executou e reprovou | |
+| `○ SKIPPED`     | foi deliberadamente pulada | |
+| `— NOT REACHED` | **nunca começou** | não é uma falha |
+| `? UNKNOWN`     | não há material para afirmar nada | não é uma falha |
+
+Numa execução saudável o relatório para praticamente aqui: linha do tempo,
+**um resumo de uma ou duas frases**, cobertura das fontes, limitações e a
+decisão do gate. Nada de causa provável, nada de recomendações — não houve
+problema, e inventar um seria o pior serviço que um relatório pode prestar.
+
+Numa execução reprovada aparece a seção **Explicação da falha**, com a etapa
+destacada, o que aconteceu, as evidências, a causa provável, as ações, a
+confiança, as limitações e as etapas que não foram alcançadas.
 
 ### O que o relatório reúne
 
@@ -362,29 +402,46 @@ Clique no ID de um fato citado por uma inferência: o link leva ao fato. Se uma
 inferência não conseguisse apontar nenhum fato válido, ela **não estaria lá** —
 o agente a remove e declara a remoção nas limitações.
 
-### Três coisas para localizar
+### Quatro coisas para localizar
 
-1. **A correlação do SHA.** O commit que o CI aprovou é o mesmo que está no ar?
+1. **A primeira etapa que falhou.** Na linha do tempo ela vem marcada com
+   `primeira falha`, e é a única que ganha explicação detalhada. Ela é escolhida
+   por **regra** — percorrendo as etapas na ordem real e devolvendo a primeira
+   com `FAILURE` — e não pelo modelo. Um modelo que responde "está tudo bem"
+   numa execução reprovada tem a resposta descartada, e a divergência sai
+   publicada nas limitações.
+2. **A correlação do SHA.** O commit que o CI aprovou é o mesmo que está no ar?
    (`matched`, `partial`, `mismatch`, `unknown`.) Um `mismatch` aparece
    destacado antes de qualquer outra análise.
-2. **A força da causa.** Procure o campo *força da afirmação*:
+3. **A força da causa.** Procure o campo *força da afirmação*:
    `comprovada diretamente pelo log`, `causa provável`, `hipótese fraca` ou
    `não foi possível apontar uma causa`. O classificador determinístico **nunca**
    emite a primeira: padrão sustenta hipótese, não causa comprovada.
-3. **A seção "O que a IA não pode afirmar".** Ela está no relatório, e não só na
+4. **A seção "O que a IA não pode afirmar".** Ela está no relatório, e não só na
    documentação, porque é lida no momento em que alguém está tentado a tratar o
    texto do modelo como veredito.
 
-### Os dois cenários, sem depender do Railway
+### Os cinco cenários, sem depender do Railway
 
 ```bash
-npm run operational:fixture -- success
-npm run operational:fixture -- functional-failure
-open reports/operational-deployment-report.html
+npm run pipeline:fixture -- success
+npm run pipeline:fixture -- ci-lint-failure
+npm run pipeline:fixture -- ci-tests-failure
+npm run pipeline:fixture -- ci-docker-failure
+npm run pipeline:fixture -- cd-functional-failure
+open reports/pipeline-execution-report.html
 ```
 
-**Exercício.** Nos dois cenários o CI passou, o Docker passou, o Railway
-construiu e a aplicação subiu. Abra os dois e responda:
+Funcionam sem Railway, sem OpenAI e sem internet: o material está versionado em
+`samples/pipeline-executions/`. **A chave sozinha não liga o modelo** — mesmo
+com `OPENAI_API_KEY` no `.env`, a chamada só acontece com
+`PIPELINE_FIXTURE_USE_OPENAI=true`.
+
+Como demonstrar os cinco ao vivo, com branch temporária e sem tocar na `main`:
+**`docs/day-1-failure-scenarios.md`**.
+
+**Exercício A — falha de CD.** Em `success` e `cd-functional-failure` o CI
+passou, o Docker passou, o Railway construiu e a aplicação subiu. Abra os dois:
 
 1. No cenário saudável, o log do smoke test **tem** `ECONNREFUSED` e `HTTP 502`
    nas primeiras tentativas. Por que nenhuma dessas linhas virou um `[FATO]`?
@@ -393,6 +450,19 @@ construiu e a aplicação subiu. Abra os dois e responda:
    que a funcionalidade quebrou?
 3. Qual fato veio do **log interno** da aplicação e explica o `HTTP 500` que o
    smoke test só conseguiu constatar de fora?
+
+**Exercício B — falhas de CI.** Abra os três cenários `ci-*`:
+
+4. Em `ci-lint-failure`, qual etapa recebeu `✗ FAILURE`? E as etapas de Railway
+   em diante — por que elas aparecem como `— NOT REACHED` e **não** como
+   `✗ FAILURE`?
+5. Em `ci-lint-failure`, `Testes`, `Build` e `Docker` aparecem como
+   `✓ SUCCESS`. Por quê? (Dica: olhe a ordem dos jobs em
+   `.github/workflows/ci.yml`.)
+6. Em `ci-tests-failure`, o lint passou e o teste falhou. Qual é a diferença
+   entre "o código está bem escrito" e "o código faz o que se espera dele"?
+7. Em `ci-docker-failure`, `npm run build` passou e a imagem não nasceu. O que o
+   job `docker-build` verifica que os outros três não verificam?
 
 ### O diagnóstico anterior continua existindo
 
@@ -501,7 +571,7 @@ Nada aqui depende de tudo funcionar. Escolha a coluna que se aplica:
 
 | Se isto falhar…                          | Faça isto                                                                 |
 | ---------------------------------------- | ------------------------------------------------------------------------- |
-| **Railway fora do ar ou conta sem acesso** | Pule as etapas 7 e 8. Use `npm run operational:fixture -- success` e `-- functional-failure` na etapa 9 — os cenários completos estão versionados em `samples/operational/`. Os logs de smoke test isolados continuam em `samples/deployment/*.log`. |
+| **Railway fora do ar ou conta sem acesso** | Pule as etapas 7 e 8. Use `npm run pipeline:fixture -- <cenário>` na etapa 9 — os cinco cenários estão versionados em `samples/pipeline-executions/`. Os logs de smoke test isolados continuam em `samples/deployment/*.log`. |
 | **Sem `RAILWAY_TOKEN`**                    | Nada a fazer: a coleta da plataforma é best-effort. O relatório sai declarando os logs do Railway como **ausentes**, e o `cd-gate` não muda. É um bom momento para mostrar a seção *Cobertura das fontes*. |
 | **API da OpenAI indisponível ou sem chave** | Nada a fazer: o fallback determinístico assume sozinho. Confira `usedFallback: true` no relatório e siga o roteiro. |
 | **Integração GitHub↔Railway com problema** | Use `workflow_dispatch` em **Post-deploy validation** apontando para uma URL que você controle, ou rode `npm run deployment:smoke` contra o container local (`docker compose up`). |
@@ -524,9 +594,21 @@ docker compose down
 
 ## Para os Dias 2 e 3
 
+O que separa os três dias é o **material de entrada**:
+
+| Dia | Pergunta | Material |
+| --- | -------- | -------- |
+| **1 — hoje** | *O que aconteceu nesta execução, em qual etapa falhou, e o que os logs permitem concluir?* | **uma** execução e seus logs |
+| **2** | *O comportamento atual está fora do padrão esperado?* | **várias** execuções comparadas entre si |
+| **3** | *Os sinais atuais indicam que uma falha poderá ocorrer?* | histórico e sinais anteriores |
+
+O Dia 1 termina na explicação de **uma** execução: coleta, etapa da falha,
+seleção de evidências, o que aconteceu, causa provável, ações e limitações. Ele
+não compara com execuções anteriores e não projeta nada para a frente.
+
 Fora do escopo hoje, de propósito: banco de dados e persistência, múltiplos
 ambientes reais, blue-green, canary, rollback automático, escalabilidade,
 observabilidade externa (Prometheus, Grafana, OpenTelemetry), detecção de
-anomalias e correção automática de código.
+anomalias, análise preditiva e correção automática de código.
 
 A base entregue no Dia 1 é organizada para receber isso — não para antecipá-lo.

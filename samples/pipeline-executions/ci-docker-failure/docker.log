@@ -1,0 +1,25 @@
+#1 [internal] load build definition from Dockerfile
+#1 transferring dockerfile: 1.42kB done
+#1 DONE 0.0s
+#5 [deps 4/6] RUN npm ci
+#5 DONE 21.7s
+#8 [build 2/2] RUN npm run build -w frontend
+#8 2.101 vite v5.4.11 building for production...
+#8 3.509 ✓ built in 1.40s
+#8 DONE 3.6s
+#11 [runtime-deps 3/3] RUN npm ci --omit=dev --workspace backend --ignore-scripts
+#11 DONE 8.7s
+#12 [runtime 5/7] COPY --from=build /app/frontend/build ./frontend/dist
+#12 ERROR: failed to calculate checksum of ref 9f31c0a7-2d84-4b16-9e05-31c7ad6f8e42::qz1v0x8y: "/app/frontend/build": not found
+------
+ > [runtime 5/7] COPY --from=build /app/frontend/build ./frontend/dist:
+------
+Dockerfile:41
+--------------------
+  39 |     COPY --from=runtime-deps /app/node_modules ./node_modules
+  40 |     COPY --from=runtime-deps /app/backend/node_modules ./backend/node_modules
+  41 | >>> COPY --from=build /app/frontend/build ./frontend/dist
+  42 |     COPY backend ./backend
+  43 |     COPY package.json ./
+--------------------
+ERROR: failed to solve: failed to compute cache key: failed to calculate checksum of ref 9f31c0a7-2d84-4b16-9e05-31c7ad6f8e42::qz1v0x8y: "/app/frontend/build": not found

@@ -304,6 +304,8 @@ depois do `?`).
 | `npm run railway:collect`          | Coleta build/deploy/runtime do Railway (opt-in)         |
 | `npm run operational:report`       | Relatório operacional a partir de `reports/`            |
 | `npm run operational:fixture -- success` | Relatório operacional de um cenário versionado    |
+| `npm run pipeline:report`          | Relatório de execução do pipeline (CI ou CD)            |
+| `npm run pipeline:fixture -- <cenário>` | Um dos cinco cenários do Dia 1, offline            |
 
 ---
 
@@ -562,28 +564,63 @@ e mesmo assim são classificados de forma diferente — `healthcheck`, `startup`
 
 ---
 
-## Relatório operacional (CI → CD → runtime)
+## Relatório de execução do pipeline (CI → CD → runtime)
 
 A saída principal da demonstração do Dia 1. Reúne **as três fontes** — artefatos
 do CI, logs internos do Railway e o log do smoke test — num relatório único, em
 JSON, Markdown e **HTML autônomo**.
 
+**Um relatório, dois fluxos.** O workflow pós-deployment não roda quando o CI
+falha — e é aí que alguém mais precisa dele. Por isso ele também nasce **dentro
+do CI**, com o mesmo modelo de execução e o mesmo HTML. Muda só o escopo.
+
 ```bash
-npm run operational:fixture -- success
-npm run operational:fixture -- functional-failure
-open reports/operational-deployment-report.html
+npm run pipeline:fixture -- success
+npm run pipeline:fixture -- ci-lint-failure
+npm run pipeline:fixture -- ci-tests-failure
+npm run pipeline:fixture -- ci-docker-failure
+npm run pipeline:fixture -- cd-functional-failure
+open reports/pipeline-execution-report.html
 ```
 
-Funciona **sem Railway, sem OpenAI e sem internet**: os cenários vivem
-versionados em `samples/operational/`.
+Funciona **sem Railway, sem OpenAI e sem internet**: os cinco cenários vivem
+versionados em `samples/pipeline-executions/`. Mesmo com `OPENAI_API_KEY` no
+ambiente, a fixture **não** chama o modelo sem `PIPELINE_FIXTURE_USE_OPENAI=true`.
 
-O relatório separa quatro registros com **rótulo textual**, não só cor:
+### A linha do tempo da execução
+
+Doze etapas, na ordem real do pipeline, cada uma com símbolo **e** texto:
 
 ```text
-[FATO]          está literalmente no log — com ID, fonte, fase e timestamp
-[INFERÊNCIA]    foi deduzido — e mostra QUAIS fatos a sustentam
-[RECOMENDAÇÃO]  uma ação acionável
-[LIMITAÇÃO]     o que não foi possível verificar
+✓ SUCCESS     Lint            ✓ SUCCESS     Railway Deploy
+✗ FAILURE     Testes          — NOT REACHED Inicialização
+○ SKIPPED     Build           ? UNKNOWN     Health check
+```
+
+`— NOT REACHED` significa que a etapa **nunca começou**. Não é uma segunda
+falha, e `? UNKNOWN` também não é falha nenhuma: ausência de dado não é má
+notícia.
+
+**A primeira etapa que falhou é escolhida por regra**, percorrendo as etapas na
+ordem e devolvendo a primeira com `FAILURE`. O modelo não participa dessa
+escolha — ele explica a etapa que recebe.
+
+### As duas formas do relatório
+
+| Resultado | O relatório traz |
+| --------- | ---------------- |
+| **sucesso** | linha do tempo compacta · resumo de uma ou duas frases · cobertura · limitações · gate. **Sem** causa provável e **sem** recomendações: não houve problema. |
+| **falha** | linha do tempo completa com a primeira falha destacada · **Explicação da falha**: etapa afetada, o que aconteceu, evidências, causa provável, ações, confiança, limitações e etapas não alcançadas. |
+
+O relatório separa os registros com **rótulo textual**, não só cor:
+
+```text
+[FATO]              está literalmente no log — com ID, fonte, fase e timestamp
+[EXPLICAÇÃO]        o que aconteceu, segundo a análise
+[INFERÊNCIA]        foi deduzido — e mostra QUAIS fatos a sustentam
+[CAUSA PROVÁVEL]    hipótese qualificada por força, nunca "causa raiz confirmada"
+[AÇÃO RECOMENDADA]  uma ação acionável
+[LIMITAÇÃO]         o que não foi possível verificar
 ```
 
 Cinco garantias, verificadas por teste:
@@ -603,8 +640,24 @@ aprovou é o mesmo que está no ar?** (`matched`, `partial`, `mismatch`,
 `unknown`). Um `mismatch` é destacado antes de qualquer outra análise.
 
 Detalhes em **[`docs/day-1-operational-logs.md`](docs/day-1-operational-logs.md)**.
+Como demonstrar os cinco cenários ao vivo:
+**[`docs/day-1-failure-scenarios.md`](docs/day-1-failure-scenarios.md)**.
 Atividade dos alunos em
 **[`docs/day-1-evidence-review.md`](docs/day-1-evidence-review.md)**.
+
+### O que o Dia 1 **não** faz
+
+| Dia | Pergunta | Material |
+| --- | -------- | -------- |
+| **1 — implementado** | *O que aconteceu nesta execução, em qual etapa falhou, e o que os logs permitem concluir?* | **uma** execução e seus logs |
+| **2 — não implementado** | *O comportamento atual está fora do padrão esperado?* | **várias** execuções comparadas |
+| **3 — não implementado** | *Os sinais atuais indicam que uma falha poderá ocorrer?* | histórico e sinais anteriores |
+
+Não há aqui baseline, comparação histórica, janela móvel, z-score, threshold
+dinâmico, detecção de anomalias, séries temporais, previsão de falhas, rollback
+automático nem monitoramento recorrente. O que separa os três dias é o material
+de entrada, e misturá-los é como um relatório do Dia 1 passa a afirmar coisas
+que os logs daquela execução não sustentam.
 
 ## Fallback sem OpenAI
 

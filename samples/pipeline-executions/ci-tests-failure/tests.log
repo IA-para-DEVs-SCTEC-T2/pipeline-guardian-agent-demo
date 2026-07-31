@@ -1,0 +1,37 @@
+
+> copa-figurinhas@1.0.0 test
+> npm run test:backend && npm run test:frontend && npm run test:automation
+
+ RUN  v2.1.9 /home/runner/work/pipeline-guardian-agent-demo/backend
+
+ ✓ test/health.test.js (8 tests) 46ms
+ ✓ test/static.test.js (13 tests) 113ms
+ ✓ test/stickers.test.js (17 tests) 180ms
+ ✓ test/structured-logger.test.js (29 tests) 152ms
+ ❯ test/report.test.js (9 tests | 1 failed) 24ms
+   × relatório do álbum > conta as figurinhas repetidas 6ms
+     → expected 3 to be 4 // Object.is equality
+
+ FAIL  test/report.test.js > relatório do álbum > conta as figurinhas repetidas
+AssertionError: expected 3 to be 4 // Object.is equality
+
+- Expected
++ Received
+
+- 4
++ 3
+
+ ❯ test/report.test.js:57:38
+     55|     const report = buildReport(store.stickers);
+     56|
+     57|     expect(report.duplicateCopies).toBe(4);
+       |                                      ^
+     58|   });
+
+ Test Files  1 failed | 4 passed (5)
+      Tests  1 failed | 75 passed (76)
+
+npm error Lifecycle script `test` failed with error:
+npm error code 1
+npm error command failed
+npm error command sh -c vitest run

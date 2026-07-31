@@ -1,0 +1,27 @@
+
+> copa-figurinhas@1.0.0 test
+> npm run test:backend && npm run test:frontend && npm run test:automation
+
+ RUN  v2.1.9 /home/runner/work/pipeline-guardian-agent-demo/backend
+
+ ✓ test/report.test.js (9 tests) 17ms
+ ✓ test/health.test.js (8 tests) 45ms
+ ✓ test/static.test.js (13 tests) 113ms
+ ✓ test/stickers.test.js (17 tests) 178ms
+ ✓ test/structured-logger.test.js (29 tests) 150ms
+
+ Test Files  5 passed (5)
+      Tests  76 passed (76)
+
+ RUN  v2.1.9 /home/runner/work/pipeline-guardian-agent-demo/frontend
+
+ ✓ src/utils.test.js (14 tests) 22ms
+ ✓ src/App.test.jsx (6 tests) 381ms
+
+ Test Files  2 passed (2)
+      Tests  20 passed (20)
+
+ RUN  v2.1.9 /home/runner/work/pipeline-guardian-agent-demo/automation
+
+ Test Files  23 passed (23)
+      Tests  287 passed (287)
