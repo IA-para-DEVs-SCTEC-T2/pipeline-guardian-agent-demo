@@ -15,6 +15,8 @@
     "railway:collect": "node src/collect-railway-evidence.mjs",
     "operational:report": "node src/operational-report.mjs",
     "operational:fixture": "node src/operational-report.mjs --fixture",
+    "pipeline:report": "node src/pipeline-report.mjs",
+    "pipeline:fixture": "node src/pipeline-report.mjs --fixture",
     "test": "vitest run",
     "lint": "eslint ."
   },

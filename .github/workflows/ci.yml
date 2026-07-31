@@ -212,6 +212,9 @@ jobs:
     # O diagnóstico é informativo e não é um gate técnico.
     continue-on-error: true
 
+    outputs:
+      short_sha: ${{ steps.sha.outputs.short }}
+
     permissions:
       contents: read
       pull-requests: write
@@ -287,9 +290,19 @@ jobs:
           # deles chama a OpenAI, e um secret entregue a quem não precisa é
           # superfície de exposição de graça.
           #
+          # A condição repete, no YAML, a regra que o GitHub já aplica a
+          # `pull_request` vindo de fork (secrets não são entregues). Repetir é
+          # de propósito: a regra fica visível para quem lê o workflow, e um
+          # gatilho novo adicionado no futuro não passa a entregar a chave a
+          # código não confiável por omissão.
+          #
           # Sem a chave (fork, secret não cadastrado), o agente usa o
           # classificador determinístico e o diagnóstico continua saindo.
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_API_KEY: >-
+            ${{
+              (github.event_name != 'pull_request' ||
+               github.event.pull_request.head.repo.full_name == github.repository)
+              && secrets.OPENAI_API_KEY || '' }}
           #
           # As três abaixo NÃO são secrets: são configuração. Ficam vazias
           # quando a variável não existe no repositório, e é `openai-config.mjs`
@@ -326,6 +339,71 @@ jobs:
           DOCKER_RESULT: ${{ needs.docker-build.result }}
 
         run: node automation/src/ci-diagnose.mjs
+
+      # -----------------------------------------------------------------
+      # Relatório de execução do pipeline.
+      #
+      # O workflow pós-deployment não roda quando o CI falha — e é justamente
+      # quando o CI falha que alguém precisa do relatório. Ele nasce aqui, com
+      # o MESMO modelo de execução, o MESMO HTML e as MESMAS regras do
+      # relatório pós-deployment: a única diferença é o escopo (`ci`), que faz
+      # as etapas de Railway, runtime e smoke test aparecerem como
+      # `NOT REACHED` em vez de `UNKNOWN`.
+      #
+      # `if: always()` porque o valor está exatamente no caso em que um passo
+      # anterior deste job falhou.
+      # -----------------------------------------------------------------
+      - name: Identificar o commit em análise
+        id: sha
+        if: ${{ always() }}
+        shell: bash
+        env:
+          COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: echo "short=${COMMIT_SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+      - name: Gerar relatório de execução do pipeline
+        if: ${{ always() }}
+        env:
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          EXPECTED_COMMIT_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+
+          # Os resultados REAIS dos jobs, um a um. Derivar tudo da conclusão
+          # global do workflow apagaria a diferença entre "o lint reprovou" e
+          # "o Docker reprovou" — que é a informação inteira do relatório.
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          DOCKER_RESULT: ${{ needs.docker-build.result }}
+
+          # Mesma condição do step anterior, e pelo mesmo motivo: este é o
+          # único job do workflow que vê a chave, e PR de fork não a recebe.
+          OPENAI_API_KEY: >-
+            ${{
+              (github.event_name != 'pull_request' ||
+               github.event.pull_request.head.repo.full_name == github.repository)
+              && secrets.OPENAI_API_KEY || '' }}
+          OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
+          OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT }}
+          OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS }}
+        # Os artefatos baixados são texto NÃO CONFIÁVEL: são lidos, sanitizados
+        # e citados. Nada deles é executado.
+        run: node automation/src/pipeline-report.mjs --scope ci --ci-dir reports/input
+
+      # Nome intermediário. O artefato final, com o nome previsível que a
+      # documentação cita, sai do job `publish-pipeline-report` — que é quem
+      # obtém a URL de download para o Job Summary.
+      - name: Publicar arquivos do relatório de execução
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pipeline-execution-report-files-${{ steps.sha.outputs.short }}
+          path: |
+            reports/pipeline-execution-report.json
+            reports/pipeline-execution-report.md
+            reports/pipeline-execution-report.html
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Add diagnosis to Job Summary
         if: ${{ always() }}
@@ -391,10 +469,103 @@ jobs:
         run: node automation/src/send-chatops-event.mjs
 
   # ---------------------------------------------------------------------
+  # publish-pipeline-report — a saída legível da execução.
+  #
+  # Publica o relatório com nome previsível e deixa no Job Summary um resumo
+  # CURTO com o link. O relatório inteiro NÃO vai para o Summary: o HTML é a
+  # saída principal, e um Summary gigante compete com ele em vez de apontar
+  # para ele.
+  #
+  # Não recebe secret nenhum — só move arquivos já sanitizados — e NÃO entra
+  # em `ci-gate`. Publicar um relatório nunca pode transformar um CI reprovado
+  # em aprovado.
+  # ---------------------------------------------------------------------
+  publish-pipeline-report:
+    name: Publicar relatório de execução
+    needs:
+      - diagnose
+
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    continue-on-error: true
+
+    steps:
+      - name: Baixar arquivos do relatório
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: pipeline-execution-report-files-${{ needs.diagnose.outputs.short_sha }}
+          path: reports
+
+      - name: Publicar artefato final
+        id: upload
+        if: ${{ hashFiles('reports/pipeline-execution-report.html') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pipeline-execution-report-${{ needs.diagnose.outputs.short_sha }}
+          path: |
+            reports/pipeline-execution-report.json
+            reports/pipeline-execution-report.md
+            reports/pipeline-execution-report.html
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Resumo curto no Job Summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_NAME: pipeline-execution-report-${{ needs.diagnose.outputs.short_sha }}
+        run: |
+          REPORT=reports/pipeline-execution-report.json
+
+          {
+            echo "## 🧭 Relatório de execução do pipeline"
+            echo
+
+            if [ -f "$REPORT" ]; then
+              # `node -e` em vez de `jq`: o Node já está garantido no runner e o
+              # JSON é lido como dado, nunca interpolado no shell.
+              node -e '
+                const r = require("./reports/pipeline-execution-report.json");
+                const e = r.pipelineExecution;
+                const symbol = { success: "✓", failure: "✗", not_reached: "—", skipped: "○", unknown: "?" };
+                const text = { success: "SUCCESS", failure: "FAILURE", not_reached: "NOT REACHED", skipped: "SKIPPED", unknown: "UNKNOWN" };
+                console.log(`- **Resultado:** \`${e.overallStatus}\` · **primeira falha:** \`${e.firstFailedStage ?? "nenhuma"}\``);
+                console.log(`- **Commit:** \`${String(e.commitSha).slice(0, 7)}\` · correlação \`${e.correlationStatus}\``);
+                console.log(`- **Gate (${e.gate.type}):** \`${e.gate.status}\` — determinístico`);
+                console.log(`- **Origem do diagnóstico:** ${e.usedFallback ? "classificador determinístico (`usedFallback: true`)" : "modelo (`usedFallback: false`)"}`);
+                console.log("");
+                console.log("```text");
+                for (const s of e.stages) console.log(`${symbol[s.status]} ${text[s.status].padEnd(11)} ${s.label}`);
+                console.log("```");
+              '
+            else
+              echo "- O relatório não foi gerado nesta execução."
+              echo "- O resultado do CI continua sendo o do job \`ci-gate\`, a partir dos exit codes dos jobs técnicos."
+            fi
+
+            echo
+            if [ -n "$ARTIFACT_URL" ]; then
+              echo "📄 **[Baixar o relatório HTML]($ARTIFACT_URL)** — abra \`pipeline-execution-report.html\` no navegador."
+            else
+              echo "📄 Relatório HTML no artefato \`$ARTIFACT_NAME\` desta execução."
+            fi
+
+            echo
+            echo "> A explicação é **informativa**. Quem aprova ou reprova o CI é o job \`ci-gate\`, a partir dos exit codes de \`quality\`, \`tests\`, \`build\` e \`docker-build\`."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------
   # ci-gate — resultado final do pipeline.
   #
   # Aguarda o diagnóstico terminar, mas decide o status exclusivamente
-  # com base em quality, tests e build.
+  # com base em quality, tests, build e docker-build.
+  #
+  # `publish-pipeline-report` NÃO está em `needs` de propósito: publicar um
+  # relatório não é uma condição do resultado técnico, nos dois sentidos.
   # ---------------------------------------------------------------------
   ci-gate:
     name: CI Gate

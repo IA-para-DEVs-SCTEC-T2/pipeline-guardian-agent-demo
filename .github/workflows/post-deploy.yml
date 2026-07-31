@@ -440,6 +440,13 @@ jobs:
           EXPECTED_COMMIT_SHA: ${{ needs.resolve-context.outputs.sha }}
           APP_BASE_URL: ${{ vars.APP_BASE_URL }}
 
+          # Escopo explícito: este relatório cobre CI → Railway → runtime →
+          # smoke test → CD Gate. Deduzir o escopo do material funcionaria na
+          # maioria das vezes; declará-lo evita que a ausência do artefato do
+          # smoke test (uma falha de download) transforme um relatório de CD
+          # num relatório de CI, escondendo que a validação existiu.
+          PIPELINE_REPORT_SCOPE: cd
+
           # Resultados dos jobs do CI que disparou este workflow. Em disparo
           # manual não existem, e o relatório declara `ci: unknown` — o que é
           # diferente de `ci: failure`.
@@ -485,6 +492,9 @@ jobs:
             reports/operational-deployment-report.json
             reports/operational-deployment-report.md
             reports/operational-deployment-report.html
+            reports/pipeline-execution-report.json
+            reports/pipeline-execution-report.md
+            reports/pipeline-execution-report.html
             reports/operational-context.json
             reports/operational-timeline.json
           if-no-files-found: warn
@@ -520,6 +530,11 @@ jobs:
           name: operational-report-files-${{ needs.resolve-context.outputs.short_sha }}
           path: reports
 
+      # Um artefato, os dois nomes de arquivo. `operational-deployment-report.*`
+      # é o que a documentação e os laboratórios já citam;
+      # `pipeline-execution-report.*` é o nome único dos dois fluxos. O conteúdo
+      # é idêntico — trocar um pelo outro de uma vez quebraria material impresso
+      # no meio da aula.
       - name: Publicar artefato final
         id: upload
         if: ${{ hashFiles('reports/operational-deployment-report.html') != '' }}
@@ -530,6 +545,24 @@ jobs:
             reports/operational-deployment-report.json
             reports/operational-deployment-report.md
             reports/operational-deployment-report.html
+            reports/pipeline-execution-report.json
+            reports/pipeline-execution-report.md
+            reports/pipeline-execution-report.html
+          if-no-files-found: warn
+          retention-days: 30
+
+      # Alias de nome de artefato, para que o mesmo relatório seja encontrável
+      # pelos dois nomes na aba Actions.
+      - name: Publicar artefato com o nome unificado
+        id: upload-alias
+        if: ${{ hashFiles('reports/pipeline-execution-report.html') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: pipeline-execution-report-${{ needs.resolve-context.outputs.short_sha }}
+          path: |
+            reports/pipeline-execution-report.json
+            reports/pipeline-execution-report.md
+            reports/pipeline-execution-report.html
           if-no-files-found: warn
           retention-days: 30
 
@@ -563,6 +596,17 @@ jobs:
                 console.log(`- **Fase afetada:** \`${r.affectedPhase}\``);
                 console.log(`- **Cobertura das fontes:** ${cov}`);
                 console.log(`- **Origem do diagnóstico:** ${r.usedFallback ? "classificador determinístico (`usedFallback: true`)" : "modelo (`usedFallback: false`)"}`);
+
+                const e = r.pipelineExecution;
+                if (e) {
+                  const symbol = { success: "✓", failure: "✗", not_reached: "—", skipped: "○", unknown: "?" };
+                  const text = { success: "SUCCESS", failure: "FAILURE", not_reached: "NOT REACHED", skipped: "SKIPPED", unknown: "UNKNOWN" };
+                  console.log(`- **Primeira etapa que falhou:** \`${e.firstFailedStage ?? "nenhuma"}\` · **gate ${e.gate.type}:** \`${e.gate.status}\``);
+                  console.log("");
+                  console.log("```text");
+                  for (const s of e.stages) console.log(`${symbol[s.status]} ${text[s.status].padEnd(11)} ${s.label}`);
+                  console.log("```");
+                }
               '
             else
               echo "- O relatório não foi gerado nesta execução."

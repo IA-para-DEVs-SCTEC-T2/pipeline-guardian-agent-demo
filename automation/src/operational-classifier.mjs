@@ -40,6 +40,39 @@ const CI_JOB_PHASES = {
   'docker-build': 'ci_docker',
 };
 
+/** Fase do CI → a fonte textual que a sustenta. */
+const CI_PHASE_SOURCES = {
+  ci_quality: 'ci:lint',
+  ci_tests: 'ci:tests',
+  ci_build: 'ci:build',
+  ci_docker: 'ci:docker',
+};
+
+/**
+ * Linhas de um log de CI que dizem **o que** deu errado.
+ *
+ * O log do CI não tem timestamp por linha e por isso entra na linha do tempo
+ * como um evento único de resultado — o que basta para saber que o job
+ * reprovou, e não basta para saber por quê. Sem esta seleção, o relatório de
+ * uma falha de lint diria "a verificação de lint não passou" e nada mais:
+ * o arquivo, a regra e o valor esperado ficariam no artefato que a pessoa
+ * abriria justamente para não precisar do relatório.
+ */
+const CI_ERROR_MARKERS =
+  /\berror\b|✕|✗|×|\bFAIL\b|AssertionError|\bexpected\b|not found|no-[a-z-]+\b|exit code [1-9]|\bproblem/i;
+
+/**
+ * Ruído do gerenciador de pacotes.
+ *
+ * `npm error command failed` aparece em toda falha de script e não distingue
+ * uma da outra. Fica como último recurso: entra só quando nada mais no log
+ * explica a reprovação.
+ */
+const PACKAGE_MANAGER_NOISE = /^\s*npm (?:error|ERR!)/i;
+
+/** No máximo quatro linhas de log por falha de CI — o resto é o artefato. */
+const MAX_CI_LOG_FACTS = 4;
+
 /**
  * Houve alguma resposta HTTP no log do smoke test?
  *
@@ -182,6 +215,18 @@ export function buildObservedFacts({ context, affectedPhase }) {
     });
   }
 
+  // Linhas do log do job que reprovou. Só do job que reprovou: procurar padrão
+  // de erro no log de quem passou produziria "evidência" de um problema que não
+  // houve — é a mesma regra do classificador do pipeline.
+  for (const excerpt of selectCiFailureLines({ context, affectedPhase })) {
+    push({
+      source: CI_PHASE_SOURCES[affectedPhase],
+      phase: affectedPhase,
+      timestamp: null,
+      excerpt,
+    });
+  }
+
   // Estado do deployment na plataforma.
   const deployment = context.systemFacts.railwayDeployment ?? {};
   if (deployment.status && deployment.status !== 'unknown') {
@@ -206,6 +251,39 @@ export function buildObservedFacts({ context, affectedPhase }) {
   }
 
   return facts;
+}
+
+/**
+ * As linhas do log de CI que sustentam a falha da fase afetada.
+ *
+ * Duas listas, e a segunda só é usada se a primeira ficar vazia: as linhas que
+ * nomeiam o problema (arquivo, regra, valor esperado, caminho inexistente)
+ * vencem as do gerenciador de pacotes, que dizem apenas que o script saiu com
+ * código 1. Quando o log **só** tem ruído de `npm`, ele ainda entra — é a única
+ * evidência disponível, e omiti-la deixaria a falha sem nenhuma citação.
+ *
+ * @param {object} input
+ * @returns {string[]} trechos literais, na ordem em que aparecem no log
+ */
+export function selectCiFailureLines({ context, affectedPhase }) {
+  const source = CI_PHASE_SOURCES[affectedPhase];
+  if (!source) return [];
+
+  const content = textFor(context, source);
+  if (content.length === 0) return [];
+
+  const named = [];
+  const noise = [];
+
+  for (const raw of content.split('\n')) {
+    const line = raw.trim();
+    if (line.length < MIN_EXCERPT_LENGTH) continue;
+    if (!CI_ERROR_MARKERS.test(line)) continue;
+
+    (PACKAGE_MANAGER_NOISE.test(line) ? noise : named).push(line);
+  }
+
+  return (named.length > 0 ? named : noise).slice(0, MAX_CI_LOG_FACTS);
 }
 
 /** Linhas que comprovam saúde. Só entram quando o resultado técnico foi sucesso. */
@@ -473,10 +551,11 @@ const CAUSES = {
 };
 
 const ACTIONS = {
-  success: [
-    'Nenhuma ação necessária: a versão implantada respondeu às verificações.',
-    'Guardar o relatório como registro da validação desta release.',
-  ],
+  // Vazio de propósito. Uma execução saudável não gera recomendação: o campo
+  // existe para dizer o que fazer diante de um problema, e preenchê-lo com
+  // "nenhuma ação necessária" transforma a ausência de problema num item de
+  // lista que alguém vai ler como se fosse um.
+  success: [],
   ci_quality: ['Rodar `npm run lint` localmente e corrigir as violações apontadas.'],
   ci_tests: [
     'Rodar `npm run test` localmente e reproduzir a falha.',

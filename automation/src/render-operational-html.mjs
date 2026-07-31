@@ -30,7 +30,11 @@ import {
   CAUSE_STRENGTH_LABELS,
   CORRELATION_LABELS,
   COVERAGE_ROWS,
+  GATE_STATUS_LABELS,
+  GATE_TYPE_LABELS,
   PHASE_LABELS,
+  STAGE_STATUS_SYMBOLS,
+  STAGE_STATUS_TEXT,
 } from './render-operational-report.mjs';
 
 const STATUS_TEXT = {
@@ -48,11 +52,18 @@ const MAX_TIMELINE_ROWS = 60;
 /**
  * @param {object} diagnosis diagnóstico validado por `operationalDiagnosisSchema`
  * @param {object} [context] contexto operacional (linha do tempo)
+ * @param {object} [execution] execução validada por `pipelineExecutionSchema`
  * @returns {string} documento HTML completo e autônomo
  */
-export function renderOperationalHtml(diagnosis, context = null) {
+export function renderOperationalHtml(diagnosis, context = null, execution = null) {
   const status = diagnosis.technicalStatus;
   const shortSha = String(diagnosis.commitSha).slice(0, 7);
+
+  // Execução saudável ⇒ relatório compacto. As evidências continuam no
+  // documento (recolhidas, não removidas): a diferença é que quem abre um
+  // relatório verde vê a confirmação e o gate, e não seis telas de análise de
+  // um problema que não houve.
+  const healthy = execution !== null && execution.overallStatus === 'success';
 
   const html = `<!doctype html>
 <html lang="pt-BR">
@@ -79,13 +90,31 @@ export function renderOperationalHtml(diagnosis, context = null) {
     ${metaItem('Serviço', diagnosis.service ?? 'não informado')}
     ${metaItem('Deployment ID', diagnosis.deploymentId ?? 'não informado')}
     ${metaItem('Host alvo', diagnosis.targetHost)}
+    ${metaItem(
+      'Correlação do commit',
+      `${CORRELATION_LABELS[diagnosis.correlationStatus] ?? 'não verificada'} (${diagnosis.correlationStatus})`,
+    )}
     ${metaItem('Análise gerada em', diagnosis.generatedAt)}
     ${metaItem('Origem do diagnóstico', diagnosis.usedFallback ? 'classificador determinístico (sem modelo)' : 'modelo, com saída validada por schema')}
     ${metaItem('usedFallback', String(diagnosis.usedFallback))}
+    ${
+      execution
+        ? metaItem(
+            GATE_TYPE_LABELS[execution.gate.type] ?? 'Gate',
+            `${GATE_STATUS_LABELS[execution.gate.status] ?? execution.gate.status} (${execution.gate.status}) · determinado por regra técnica`,
+          )
+        : ''
+    }
   </dl>
 </header>
 
 <main id="conteudo">
+
+${renderExecutionTimeline(execution)}
+
+${renderSuccessSummary(execution)}
+
+${renderFailureExplanation(execution)}
 
 <section aria-labelledby="gates">
   <h2 id="gates">Resultado por gate</h2>
@@ -133,24 +162,34 @@ export function renderOperationalHtml(diagnosis, context = null) {
 <section aria-labelledby="fatos">
   <h2 id="fatos">Fatos observados</h2>
   <p class="hint">Trechos que <strong>existem</strong> no material coletado. Cada um foi conferido contra a fonte antes de entrar aqui.</p>
-  ${
+  ${collapsible(
+    healthy,
+    `${diagnosis.observedFacts.length} fato(s) coletado(s) nesta execução`,
     diagnosis.observedFacts.length === 0
       ? '<p class="empty">Nenhum fato foi coletado nesta execução.</p>'
-      : `<ol class="facts">${diagnosis.observedFacts.map(renderFact).join('')}</ol>`
-  }
+      : `<ol class="facts">${diagnosis.observedFacts.map(renderFact).join('')}</ol>`,
+  )}
 </section>
 
 <section aria-labelledby="inferencias">
   <h2 id="inferencias">Inferências</h2>
   <p class="hint">Afirmações <strong>deduzidas</strong> dos fatos — elas não estão literalmente no log. Cada uma aponta os fatos que a sustentam.</p>
-  ${
+  ${collapsible(
+    healthy,
+    `${diagnosis.inferences.length} inferência(s)`,
     diagnosis.inferences.length === 0
       ? '<p class="empty">Nenhuma inferência se sustentou nos fatos coletados.</p>'
-      : `<ul class="inferences">${diagnosis.inferences.map(renderInference).join('')}</ul>`
-  }
+      : `<ul class="inferences">${diagnosis.inferences.map(renderInference).join('')}</ul>`,
+  )}
 </section>
 
-<section aria-labelledby="causa">
+${
+  // Numa execução aprovada estas duas seções não existem. Renderizá-las com
+  // "não foi possível estabelecer uma causa" e "nenhuma ação sugerida" daria a
+  // um relatório verde a forma visual de um relatório de incidente.
+  healthy
+    ? ''
+    : `<section aria-labelledby="causa">
   <h2 id="causa">Causa provável</h2>
   <p class="strength"><span class="tag tag-strength">força da afirmação</span> ${escapeHtml(CAUSE_STRENGTH_LABELS[diagnosis.causeStrength] ?? 'não informada')}</p>
   <p class="summary">${
@@ -169,7 +208,8 @@ export function renderOperationalHtml(diagnosis, context = null) {
           .map((action) => `<li><span class="tag tag-action">[RECOMENDAÇÃO]</span> ${escapeHtml(action)}</li>`)
           .join('')}</ol>`
   }
-</section>
+</section>`
+}
 
 <section aria-labelledby="limitacoes">
   <h2 id="limitacoes">Limitações</h2>
@@ -182,7 +222,7 @@ export function renderOperationalHtml(diagnosis, context = null) {
   }
 </section>
 
-${renderTimeline(context)}
+${renderTimeline(context, healthy)}
 
 ${renderEvidence(context)}
 
@@ -225,6 +265,151 @@ ${renderEvidence(context)}
 /* Blocos                                                                     */
 /* ------------------------------------------------------------------------- */
 
+/**
+ * Recolhe um bloco quando a execução é saudável.
+ *
+ * "Recolher" e não "remover": a evidência continua no arquivo, a um clique. Um
+ * relatório verde que apaga o material que o sustenta não é compacto, é
+ * incompleto.
+ */
+function collapsible(collapse, summary, content) {
+  if (!collapse) return content;
+  return `<details>
+  <summary>${escapeHtml(summary)}</summary>
+  ${content}
+</details>`;
+}
+
+/**
+ * A linha do tempo por etapa — o coração visual do relatório.
+ *
+ * Cada linha traz **símbolo, texto e nome da etapa**, nesta ordem. A cor da
+ * borda é o quarto sinal, nunca o primeiro: quem imprime em preto e branco, não
+ * distingue verde de vermelho ou cola o texto numa mensagem continua lendo
+ * `✗ FAILURE Rota funcional` sem perder nada.
+ */
+function renderExecutionTimeline(execution) {
+  if (!execution) return '';
+
+  const failed = execution.overallStatus === 'failure';
+
+  const rows = execution.stages
+    .map((stage) => {
+      const first = failed && stage.stage === execution.firstFailedStage;
+      return `<li class="stage stage-${escapeHtml(stage.status)}${first ? ' stage-first-failure' : ''}">
+    <span class="stage-symbol" aria-hidden="true">${escapeHtml(STAGE_STATUS_SYMBOLS[stage.status] ?? '?')}</span>
+    <span class="stage-status">${escapeHtml(STAGE_STATUS_TEXT[stage.status] ?? 'UNKNOWN')}</span>
+    <span class="stage-label">${escapeHtml(stage.label)}</span>
+    ${first ? '<span class="stage-flag">primeira falha</span>' : ''}
+  </li>`;
+    })
+    .join('\n');
+
+  return `<section aria-labelledby="execucao">
+  <h2 id="execucao">Linha do tempo da execução</h2>
+  <p class="hint">Etapas na ordem real do pipeline. <code>NOT REACHED</code> significa que a etapa <strong>nunca começou</strong> — não é uma segunda falha.</p>
+  <ol class="stages">
+${rows}
+  </ol>
+  <p class="gate-line">Resultado do <strong>${escapeHtml(GATE_TYPE_LABELS[execution.gate.type] ?? 'gate')}</strong>: ${escapeHtml(
+    GATE_STATUS_LABELS[execution.gate.status] ?? execution.gate.status,
+  )} — decisão determinística, sem participação da análise por IA.</p>
+</section>`;
+}
+
+/** O resumo curto de uma execução saudável. Uma ou duas frases, e nada mais. */
+function renderSuccessSummary(execution) {
+  if (!execution || execution.overallStatus !== 'success' || !execution.successSummary) return '';
+
+  return `<section aria-labelledby="resumo">
+  <h2 id="resumo">Resumo</h2>
+  <p class="summary">${escapeHtml(execution.successSummary)}</p>
+  <p class="hint">Execução aprovada: não há causa provável a apontar nem ação a recomendar. O relatório não procura risco onde os gates não encontraram problema.</p>
+</section>`;
+}
+
+/**
+ * A explicação da falha principal — **uma só**, sobre a etapa que o sistema
+ * elegeu.
+ *
+ * Os rótulos (`[EXPLICAÇÃO]`, `[CAUSA PROVÁVEL]`, `[AÇÃO RECOMENDADA]`,
+ * `[LIMITAÇÃO]`) aparecem escritos pelo mesmo motivo de sempre: separar o que
+ * foi observado do que foi deduzido é a única coisa deste relatório que não
+ * pode se perder na cópia e cola.
+ */
+function renderFailureExplanation(execution) {
+  if (!execution || execution.overallStatus !== 'failure') return '';
+
+  const explanation = execution.failureExplanation;
+  if (!explanation) return '';
+
+  const evidence =
+    explanation.evidenceIds.length === 0
+      ? '<p class="empty">Nenhuma evidência ancorada para esta etapa.</p>'
+      : `<p><span class="tag tag-fact">[FATO]</span> ${explanation.evidenceIds
+          .map((id) => `<a class="ref" href="#fato-${escapeHtml(id)}">${escapeHtml(id)}</a>`)
+          .join(', ')} — os trechos literais estão em <em>Fatos observados</em>.</p>`;
+
+  const actions =
+    explanation.recommendedActions.length === 0
+      ? '<p class="empty">Nenhuma ação sugerida.</p>'
+      : `<ol class="actions">${explanation.recommendedActions
+          .map(
+            (action) =>
+              `<li><span class="tag tag-action">[AÇÃO RECOMENDADA]</span> ${escapeHtml(action)}</li>`,
+          )
+          .join('')}</ol>`;
+
+  const limitations =
+    explanation.limitations.length === 0
+      ? '<p class="empty">Nenhuma limitação declarada.</p>'
+      : `<ul class="limitations">${explanation.limitations
+          .map(
+            (limitation) =>
+              `<li><span class="tag tag-limit">[LIMITAÇÃO]</span> ${escapeHtml(limitation)}</li>`,
+          )
+          .join('')}</ul>`;
+
+  return `<section aria-labelledby="explicacao" class="explanation">
+  <h2 id="explicacao">Explicação da falha</h2>
+
+  <h3>Etapa afetada</h3>
+  <p class="phase"><code>${escapeHtml(explanation.stage)}</code> — ${escapeHtml(explanation.label)}</p>
+
+  <h3>O que aconteceu</h3>
+  <p class="summary"><span class="tag tag-inference">[EXPLICAÇÃO]</span> ${escapeHtml(explanation.whatHappened)}</p>
+
+  <h3>Evidências</h3>
+  ${evidence}
+
+  <h3>Causa provável</h3>
+  <p class="summary">${
+    explanation.probableCause
+      ? `<span class="tag tag-inference">[CAUSA PROVÁVEL]</span> ${escapeHtml(explanation.probableCause)}`
+      : 'O material coletado mostra o sintoma, não a causa: nenhuma causa foi estabelecida.'
+  }</p>
+  <p class="strength"><span class="tag tag-strength">força da afirmação</span> ${escapeHtml(
+    CAUSE_STRENGTH_LABELS[explanation.causeStrength] ?? 'não informada',
+  )}</p>
+
+  <h3>Ações recomendadas</h3>
+  ${actions}
+
+  <h3>Confiança</h3>
+  <p>${escapeHtml(CONFIDENCE_TEXT[explanation.confidence] ?? explanation.confidence)}</p>
+
+  <h3>Limitações desta explicação</h3>
+  ${limitations}
+
+  <h3>Etapas não alcançadas</h3>
+  <p>${
+    explanation.notReachedStages.length === 0
+      ? 'Nenhuma: todas as etapas posteriores chegaram a executar.'
+      : `${escapeHtml(explanation.notReachedStages.join(', '))} — nunca começaram. <strong>Não são falhas independentes.</strong>`
+  }</p>
+</section>`;
+}
+
 function renderFact(fact) {
   return `<li class="fact" id="fato-${escapeHtml(fact.id)}">
   <p class="fact-head">
@@ -255,7 +440,7 @@ function renderInference(inference) {
 </li>`;
 }
 
-function renderTimeline(context) {
+function renderTimeline(context, collapse = false) {
   const events = context?.timeline ?? [];
   if (events.length === 0) return '';
 
@@ -283,14 +468,18 @@ function renderTimeline(context) {
   <p class="hint">Ordenada por horário quando ele existe. Eventos sem horário aparecem no fim, agrupados por fase, e estão marcados como tal: nenhum timestamp foi inventado.${
     withoutTimestamp > 0 ? ` Nesta execução, ${withoutTimestamp} evento(s) não tinham horário.` : ''
   }</p>
-  <div class="scroll">
+  ${collapsible(
+    collapse,
+    `${events.length} evento(s) registrado(s)`,
+    `<div class="scroll">
   <table>
     <thead><tr><th scope="col">Horário</th><th scope="col">Fase</th><th scope="col">Fonte</th><th scope="col">Nível</th><th scope="col">Evento</th></tr></thead>
     <tbody>
 ${rows}
     </tbody>
   </table>
-  </div>
+  </div>`,
+  )}
 </section>`;
 }
 
@@ -462,6 +651,34 @@ ol, ul { padding-left: 1.25rem; }
 .actions li, .limitations li { margin-bottom: .5rem; }
 .limitations { list-style: none; padding: 0; }
 .limitations li { border-left: 4px solid var(--limit); padding: .35rem .75rem; }
+.stages { list-style: none; padding: 0; margin: .5rem 0 1rem; }
+.stage {
+  display: flex; align-items: baseline; gap: .6rem; padding: .3rem .6rem;
+  border-left: 4px solid var(--line); font-size: .95rem;
+}
+.stage-symbol { font-weight: 700; width: 1rem; text-align: center; }
+.stage-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: .74rem; letter-spacing: .06em; color: var(--muted);
+  min-width: 6.5rem;
+}
+.stage-label { font-weight: 600; }
+.stage-success { border-left-color: var(--ok); }
+.stage-success .stage-symbol, .stage-success .stage-status { color: var(--ok); }
+.stage-failure { border-left-color: var(--bad); background: #fdf1f2; }
+.stage-failure .stage-symbol, .stage-failure .stage-status { color: var(--bad); }
+.stage-unknown { border-left-color: var(--warn); }
+.stage-unknown .stage-symbol, .stage-unknown .stage-status { color: var(--warn); }
+.stage-not_reached, .stage-skipped { color: var(--muted); }
+.stage-first-failure { border-left-width: 8px; font-weight: 700; }
+.stage-flag {
+  font-size: .7rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--bad); border: 1px solid currentColor; border-radius: 3px; padding: .05rem .35rem;
+}
+.gate-line { font-size: .95rem; }
+.explanation { border: 2px solid var(--bad); border-radius: 8px; padding: .5rem 1.25rem 1.25rem; }
+.explanation h2 { border-bottom-color: var(--bad); }
+.explanation h3 { font-size: 1rem; margin: 1.25rem 0 .35rem; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
 .coverage { list-style: none; padding: 0; margin: .5rem 0; font-size: .92rem; }
 .coverage-row { display: flex; align-items: baseline; gap: .4rem; padding: .15rem 0; }
 .coverage-label { white-space: nowrap; }

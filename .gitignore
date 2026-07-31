@@ -19,10 +19,10 @@ reports/
 # usados quando o Railway ou a rede não estão disponíveis.
 !samples/deployment/*.log
 
-# Idem para os cenários operacionais do Dia 1 (`npm run operational:fixture`).
+# Idem para os cenários de execução do Dia 1 (`npm run pipeline:fixture`).
 # Os `.jsonl` e `.json` já escapam da regra `*.log`; os `.log` precisam da
 # negação explícita.
-!samples/operational/**/*.log
+!samples/pipeline-executions/**/*.log
 
 # ChatOps (FastAPI). `chatops/.env` já cai na regra `.env` acima — é lá que
 # ficam o segredo do HMAC e as URLs dos webhooks do Discord.

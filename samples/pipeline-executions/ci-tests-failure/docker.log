@@ -1,0 +1,14 @@
+#1 [internal] load build definition from Dockerfile
+#1 DONE 0.0s
+#5 [deps 4/6] RUN npm ci
+#5 DONE 21.9s
+#8 [build 2/2] RUN npm run build -w frontend
+#8 2.095 vite v5.4.11 building for production...
+#8 3.503 ✓ built in 1.41s
+#8 DONE 3.6s
+#11 [runtime-deps 3/3] RUN npm ci --omit=dev --workspace backend --ignore-scripts
+#11 DONE 8.8s
+#14 exporting to image
+#14 writing image sha256:c04b18de5f92a7136b8e0d47c25a9f8031be7d6c4a09f8523e1bd670cf49a238
+#14 naming to docker.io/library/copa-figurinhas:ci
+#14 DONE 0.7s

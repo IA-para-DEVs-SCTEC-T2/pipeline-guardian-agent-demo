@@ -124,7 +124,54 @@ mudou com a entrada do Railway.
 
 Reúne **artefatos do CI, logs internos do Railway e o log do smoke test** num
 relatório único — JSON, Markdown e **HTML autônomo**
-(`operational-deployment-report.*`). Ver `docs/day-1-operational-logs.md`.
+(`pipeline-execution-report.*`, gravado também como
+`operational-deployment-report.*`). Ver `docs/day-1-operational-logs.md` e
+`docs/day-1-failure-scenarios.md`.
+
+- **Um relatório, dois fluxos, um HTML.** O pós-deployment não roda quando o CI
+  falha — e é aí que o relatório vale mais. Ele nasce também no job `diagnose`
+  do `ci.yml`, com o mesmo `pipelineExecutionSchema` e o mesmo renderizador. A
+  única diferença é o `scope`: com `ci`, as etapas de Railway em diante são
+  `not_reached` (nunca começaram), não `unknown`. Um segundo relatório com outro
+  layout seria um segundo layout para manter e duas verdades a conciliar.
+- **Etapa não é fase.** `OPERATIONAL_PHASES` responde *onde* um fato foi
+  observado; `PIPELINE_STAGES` responde *o que o pipeline executou*, e por isso
+  inclui os gates. As duas se encontram no campo `phase` de cada etapa, e
+  `pipeline-execution-schema.mjs` reprova **na importação** uma etapa cuja fase
+  não exista no vocabulário do diagnóstico.
+- **`not_reached` não é `failure`, e `unknown` também não.** É a distinção de
+  que o dia inteiro depende: uma etapa que nunca começou porque outra reprovou
+  não é uma segunda falha. Contá-la assim transformaria um problema em dez e
+  esconderia qual deles precisa ser corrigido. `cancelled` do GitHub Actions vira
+  `not_reached` pelo mesmo motivo: job interrompido não produziu veredito.
+- **A primeira falha é regra, não opinião.** `determineFirstFailedStage` percorre
+  `PIPELINE_STAGES` na ordem real e devolve a primeira `failure`. Precedência:
+  (1) `mismatch` de SHA zera as etapas de CD para `unknown` — log de outra
+  release não sustenta conclusão sobre este commit; (2) falha do CI torna as
+  etapas de CD `not_reached`; (3) a ordem decide o resto; (4) a fase do
+  classificador entra como **união**, nunca substituição — ela só acrescenta a
+  etapa que os logs internos acusam e que a observação externa não alcançava.
+- **Os jobs do CI rodam em paralelo, e o relatório diz a verdade sobre isso.**
+  Numa falha de lint, `tests`, `build` e `docker-build` continuam `success`
+  porque foi isso que `needs.<job>.result` reportou. Marcar como "não alcançado"
+  um job que rodou e passou seria exatamente a invenção que o resto do desenho
+  proíbe.
+- **Sucesso não gera causa nem recomendação.** `probableCause` é `null` e
+  `recommendedActions` é `[]` — no classificador e também quando o modelo
+  responde outra coisa (a saída descartada vira limitação declarada). Um modelo
+  prestativo produz "considere monitorar X" para qualquer release verde, e
+  publicar isso ensina a procurar problema onde os gates não encontraram nenhum.
+- **A chave sozinha não liga o modelo nas fixtures.** `pipeline-report.mjs`
+  **remove** `OPENAI_API_KEY` do ambiente sem `PIPELINE_FIXTURE_USE_OPENAI=true`.
+  Não é condição em volta da chamada: é a chave não existir para quem chamaria.
+  A máquina de quem apresenta a aula tem a chave no `.env`.
+- **`publish-pipeline-report` não está em `needs` do `ci-gate`.** Mesma
+  invariante do `cd-gate`, do outro lado: publicar um relatório não é condição do
+  resultado técnico, nos dois sentidos.
+- **Os dois nomes de arquivo são gravados sempre**, com conteúdo byte a byte
+  idêntico. Trocar `operational-deployment-report.*` por
+  `pipeline-execution-report.*` de uma vez quebraria material impresso no meio
+  da aula.
 
 - **Um vocabulário de fases, num lugar só.** `OPERATIONAL_PHASES` vive no schema
   (`operational-diagnosis-schema.mjs`) e é reexportado pelo agregador. Ele serve
@@ -207,8 +254,16 @@ npm run deployment:analyze   # diagnóstico do log de deployment
 npm run deployment:analyze -- --log samples/deployment/startup-failure.log --status failure
 
 npm run operational:report                        # relatório operacional a partir de reports/
-npm run operational:fixture -- success            # cenário saudável versionado
-npm run operational:fixture -- functional-failure # health 200, /api/report 500
+npm run operational:fixture -- success            # alias histórico do comando abaixo
+
+npm run pipeline:report                           # relatório de execução (escopo deduzido)
+npm run pipeline:fixture -- success               # os cinco cenários do Dia 1, offline
+npm run pipeline:fixture -- ci-lint-failure       # firstFailedStage: ci_quality
+npm run pipeline:fixture -- ci-tests-failure      # firstFailedStage: ci_tests
+npm run pipeline:fixture -- ci-docker-failure     # firstFailedStage: ci_docker
+npm run pipeline:fixture -- cd-functional-failure # health 200, /api/report 500
+
+PIPELINE_FIXTURE_USE_OPENAI=true npm run pipeline:fixture -- success  # opt-in do modelo
 
 RAILWAY_LIVE_TEST=true npm run railway:collect    # única coleta real do Railway
 ```
@@ -233,10 +288,14 @@ Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
 - Logs de contingência do deployment: `samples/deployment/<cenário>.log`
   (material didático versionado — precisam da negação em `.gitignore` para
   escapar da regra `*.log`).
-- Cenários operacionais completos: `samples/operational/<cenário>/` com
+- Cenários completos de execução: `samples/pipeline-executions/<cenário>/` com
   `lint.log`, `tests.log`, `build.log`, `docker.log`, `railway-*.jsonl`,
   `deployment.log`, `smoke-test.json`, `collection-metadata.json` e
-  `ci-results.json` (mesma negação no `.gitignore`).
+  `ci-results.json` (mesma negação no `.gitignore`). Os cenários de CI têm
+  apenas os quatro `.log` e o `ci-results.json`: sem deployment, não há material
+  de deployment a versionar. São **exatamente cinco**, listados em
+  `DAY_1_SCENARIOS`; `functional-failure` continua funcionando como alias de
+  `cd-functional-failure`.
 - Logging da aplicação: `backend/src/logging/structured-logger.js`.
 
 ## Restrições
