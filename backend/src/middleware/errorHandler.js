@@ -1,5 +1,7 @@
 import { ZodError } from 'zod';
 
+import { describeError, logEvent } from '../logging/structured-logger.js';
+
 /**
  * Erro de aplicação com status HTTP associado.
  */
@@ -38,14 +40,25 @@ export function errorHandler(err, req, res, next) {
     });
   }
 
-  // Erro inesperado -> 500
-  const line = {
-    level: 'error',
-    time: new Date().toISOString(),
-    requestId: req.id,
-    message: err.message,
-  };
-  process.stderr.write(`${JSON.stringify(line)}\n`);
+  // Erro inesperado -> 500.
+  //
+  // A mensagem passa pelo redator antes de ir para o log: uma exceção costuma
+  // carregar justamente o valor que a causou (uma URL de conexão com senha, um
+  // header). O stack trace não é registrado — ver `describeError`.
+  const described = describeError(err);
+
+  logEvent.error({
+    eventType: 'http.request.completed',
+    phase: 'runtime',
+    message: `erro não tratado: ${described.message}`,
+    fields: {
+      requestId: req.id,
+      method: req.method,
+      path: req.originalUrl,
+      statusCode: 500,
+      errorName: described.errorName,
+    },
+  });
 
   return res.status(500).json({
     error: { code: 'INTERNAL_ERROR', message: 'Erro interno do servidor' },

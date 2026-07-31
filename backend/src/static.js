@@ -25,7 +25,8 @@ import { fileURLToPath } from 'node:url';
 
 import express from 'express';
 
-import { isProduction, releaseInfo } from './release.js';
+import { buildLogEvent } from './logging/structured-logger.js';
+import { isProduction } from './release.js';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 
@@ -67,15 +68,19 @@ export function mountFrontend(app, { dist, env = process.env, log = writeLogLine
     // serve a interface é o Vite): avisar a cada execução seria só ruído. Em
     // produção, é uma configuração errada e precisa aparecer no log.
     if (isProduction(env)) {
-      log({
-        level: 'error',
-        time: new Date().toISOString(),
-        ...releaseInfo(env),
-        message:
-          `Build do frontend não encontrado em ${directory}. A API responde normalmente, ` +
-          'mas nenhuma página será servida. Rode `npm run build` antes de iniciar em produção ' +
-          '(na imagem Docker isso acontece no estágio de build).',
-      });
+      log(
+        buildLogEvent({
+          level: 'error',
+          eventType: 'app.starting',
+          phase: 'startup',
+          env,
+          message:
+            `Build do frontend não encontrado em ${directory}. A API responde normalmente, ` +
+            'mas nenhuma página será servida. Rode `npm run build` antes de iniciar em produção ' +
+            '(na imagem Docker isso acontece no estágio de build).',
+          fields: { frontendMounted: false },
+        }),
+      );
     }
 
     return { mounted: false, dist: directory };
@@ -98,12 +103,16 @@ export function mountFrontend(app, { dist, env = process.env, log = writeLogLine
     res.sendFile(indexPath);
   });
 
-  log({
-    level: 'info',
-    time: new Date().toISOString(),
-    ...releaseInfo(env),
-    message: `Frontend compilado servido a partir de ${directory}`,
-  });
+  log(
+    buildLogEvent({
+      level: 'info',
+      eventType: 'app.starting',
+      phase: 'startup',
+      env,
+      message: `Frontend compilado servido a partir de ${directory}`,
+      fields: { frontendMounted: true },
+    }),
+  );
 
   return { mounted: true, dist: directory };
 }

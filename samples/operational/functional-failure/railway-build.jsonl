@@ -1,0 +1,6 @@
+{"timestamp":"2026-07-30T15:20:02.110Z","level":"info","message":"Using detected Dockerfile at ./Dockerfile","raw":"Using detected Dockerfile at ./Dockerfile","structured":true,"eventType":null,"requestId":null}
+{"timestamp":"2026-07-30T15:20:04.480Z","level":"info","message":"#5 [deps 4/6] RUN npm ci","raw":"#5 [deps 4/6] RUN npm ci","structured":true,"eventType":null,"requestId":null}
+{"timestamp":"2026-07-30T15:20:28.900Z","level":"info","message":"#8 [build 2/2] RUN npm run build -w frontend","raw":"#8 [build 2/2] RUN npm run build -w frontend","structured":true,"eventType":null,"requestId":null}
+{"timestamp":"2026-07-30T15:20:32.512Z","level":"info","message":"vite v5.4.11 building for production... built in 1.44s","raw":"vite v5.4.11 building for production... built in 1.44s","structured":true,"eventType":null,"requestId":null}
+{"timestamp":"2026-07-30T15:20:43.220Z","level":"info","message":"Build time: 41.02 seconds","raw":"Build time: 41.02 seconds","structured":true,"eventType":null,"requestId":null}
+{"timestamp":"2026-07-30T15:20:43.900Z","level":"info","message":"Build succeeded","raw":"Build succeeded","structured":true,"eventType":null,"requestId":null}

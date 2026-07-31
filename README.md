@@ -251,18 +251,38 @@ ou
 
 ## Logs estruturados
 
-Uma linha JSON por requisição, em `stdout` — é assim que Docker, Railway e
-GitHub Actions coletam, sem agente e sem arquivo:
+Uma linha JSON por **evento**, em `stdout` (`stderr` para `error`) — é assim que
+Docker, Railway e GitHub Actions coletam, sem agente e sem arquivo. O contrato
+vive em `backend/src/logging/structured-logger.js`:
 
 ```json
-{"level":"info","time":"2026-07-29T17:45:06.305Z","service":"copa-figurinhas",
- "environment":"production","version":"1.0.0","commitSha":"9f3ac21",
- "message":"GET /api/report 200","requestId":"...","method":"GET",
- "path":"/api/report","statusCode":200,"durationMs":24.36}
+{"schemaVersion":1,"time":"2026-07-30T15:21:04.502Z","level":"error",
+ "source":"application","service":"copa-figurinhas","environment":"production",
+ "commitSha":"e82b60d","eventType":"functional.report.failed","phase":"functional",
+ "message":"falha ao gerar o relatório do álbum: ...","requestId":"a47f0b93-...",
+ "statusCode":500,"functionalArea":"report","errorName":"TypeError"}
 ```
 
-**Nunca** são registrados: `Authorization`, cookies, corpo de requisição, chaves
-de API, senhas ou o conteúdo de variáveis de ambiente.
+| Evento                        | Fase          |
+| ----------------------------- | ------------- |
+| `app.starting` / `app.started` | `startup`     |
+| `app.shutdown.requested`      | `shutdown`    |
+| `app.uncaught_exception` / `app.unhandled_rejection` | `shutdown` |
+| `http.request.completed`      | conforme a rota |
+| `health.check.completed`      | `healthcheck` |
+| `functional.report.completed` / `.failed` | `functional` |
+
+`healthcheck` e `functional` são fases **distintas** de propósito: é a diferença
+entre *processo vivo* e *funcionalidade sadia* — o assunto do Dia 1.
+
+A severidade vem do código HTTP: 5xx é `error`, 4xx é `warn`, o resto é `info`.
+A lista de campos é **fechada** (`OPTIONAL_FIELDS`): o que não está nela é
+descartado, para que um objeto despejado por engano não vaze header ou corpo.
+
+**Nunca** são registrados: `Authorization`, cookies, corpo de requisição, corpo
+completo de resposta, stack trace, chaves de API, senhas, o conteúdo de
+variáveis de ambiente — nem a **query string** (o `path` é gravado sem o que vem
+depois do `?`).
 
 ## Scripts (raiz)
 
@@ -281,6 +301,9 @@ de API, senhas ou o conteúdo de variáveis de ambiente.
 | `npm run agent:fixture -- test`    | Agente sobre um cenário simulado                        |
 | `npm run deployment:smoke`         | Smoke test contra `APP_BASE_URL`                        |
 | `npm run deployment:analyze`       | Diagnóstico do log de deployment                        |
+| `npm run railway:collect`          | Coleta build/deploy/runtime do Railway (opt-in)         |
+| `npm run operational:report`       | Relatório operacional a partir de `reports/`            |
+| `npm run operational:fixture -- success` | Relatório operacional de um cenário versionado    |
 
 ---
 
@@ -438,10 +461,19 @@ documentados no guia, e não inventados no arquivo.
 **CI aprovado** na `main`) ou manualmente por `workflow_dispatch`:
 
 ```text
-post-deploy-smoke-test   VERIFICA   determinístico. É o gate.
-deployment-diagnosis     EXPLICA    informativo. Roda com if: always().
-cd-gate                  DECIDE     olha SÓ o resultado do smoke test.
+resolve-context                    qual commit? qual execução de CI?
+collect-ci-evidence                COLETA     artefatos do CI que disparou este workflow
+post-deploy-smoke-test             VERIFICA   determinístico. É o gate.
+collect-railway-evidence           COLETA     build/deploy/runtime da plataforma (best-effort)
+operational-deployment-diagnosis   EXPLICA    informativo. Roda com if: always().
+publish-operational-report         PUBLICA    JSON + Markdown + HTML
+cd-gate                            DECIDE     olha SÓ o resultado do smoke test.
 ```
+
+O `cd-gate` declara `needs: [post-deploy-smoke-test]` e **mais nada** — não
+depende do diagnóstico nem dos jobs de coleta. Um teste
+(`automation/tests/operational-workflow.test.mjs`) lê o YAML e reprova se essa
+lista crescer.
 
 O smoke test (`automation/src/smoke-test.mjs`):
 
@@ -528,6 +560,52 @@ Os três logs de falha terminam com a **mesma** linha (`health check: reprovado`
 e mesmo assim são classificados de forma diferente — `healthcheck`, `startup` e
 `environment`. Distinguir os três é o exercício.
 
+---
+
+## Relatório operacional (CI → CD → runtime)
+
+A saída principal da demonstração do Dia 1. Reúne **as três fontes** — artefatos
+do CI, logs internos do Railway e o log do smoke test — num relatório único, em
+JSON, Markdown e **HTML autônomo**.
+
+```bash
+npm run operational:fixture -- success
+npm run operational:fixture -- functional-failure
+open reports/operational-deployment-report.html
+```
+
+Funciona **sem Railway, sem OpenAI e sem internet**: os cenários vivem
+versionados em `samples/operational/`.
+
+O relatório separa quatro registros com **rótulo textual**, não só cor:
+
+```text
+[FATO]          está literalmente no log — com ID, fonte, fase e timestamp
+[INFERÊNCIA]    foi deduzido — e mostra QUAIS fatos a sustentam
+[RECOMENDAÇÃO]  uma ação acionável
+[LIMITAÇÃO]     o que não foi possível verificar
+```
+
+Cinco garantias, verificadas por teste:
+
+1. **`technicalStatus` não vem do modelo** — não existe no schema de saída dele.
+   Vem de exit code de job e de código HTTP.
+2. **Fato inventado é removido**, conferido contra o material coletado.
+3. **Inferência que perdeu seus fatos é removida**, e a remoção vira limitação.
+4. **A causa é qualificada por força** (`direct_evidence`, `probable`,
+   `weak_hypothesis`, `unavailable`) — nunca "causa raiz confirmada" a partir de
+   sintoma.
+5. **Coleta ausente não reprova nada.** Sem `RAILWAY_TOKEN`, sem artefato de CI
+   ou sem OpenAI, o relatório sai declarando as lacunas.
+
+E a correlação da release responde a pergunta que faltava: **o commit que o CI
+aprovou é o mesmo que está no ar?** (`matched`, `partial`, `mismatch`,
+`unknown`). Um `mismatch` é destacado antes de qualquer outra análise.
+
+Detalhes em **[`docs/day-1-operational-logs.md`](docs/day-1-operational-logs.md)**.
+Atividade dos alunos em
+**[`docs/day-1-evidence-review.md`](docs/day-1-evidence-review.md)**.
+
 ## Fallback sem OpenAI
 
 | Cenário                                                     | Comportamento                                           |
@@ -574,19 +652,44 @@ SMOKE_INTERVAL_SECONDS=10
 
 **3. No GitHub** (Settings › Secrets and variables › Actions):
 
-| Tipo                    | Nome                       | Obrigatório | Para quê                             |
-| ----------------------- | -------------------------- | ----------- | ------------------------------------ |
-| Repository **variable** | `APP_BASE_URL`             | **sim**     | URL pública validada pelo smoke test |
-| Repository **secret**   | `OPENAI_API_KEY`           | não         | liga o diagnóstico por modelo        |
-| Repository **variable** | `OPENAI_MODEL`             | não         | troca o modelo (padrão `gpt-5-mini`) |
-| Repository **variable** | `OPENAI_REASONING_EFFORT`  | não         | padrão `low`                         |
-| Repository **variable** | `OPENAI_MAX_OUTPUT_TOKENS` | não         | padrão `2000`                        |
+| Tipo                    | Nome                       | Obrigatório | Fallback / padrão            | Para quê                             |
+| ----------------------- | -------------------------- | ----------- | ---------------------------- | ------------------------------------ |
+| Repository **variable** | `APP_BASE_URL`             | **sim**     | — (o smoke test falha claro) | URL pública validada pelo smoke test |
+| Repository **secret**   | `OPENAI_API_KEY`           | não         | classificador determinístico | liga o diagnóstico por modelo        |
+| Repository **secret**   | `RAILWAY_TOKEN`            | não         | logs da plataforma ausentes  | coleta build/deploy/runtime          |
+| Repository **variable** | `RAILWAY_PROJECT`          | não         | vínculo implícito do token   | vincula o projeto sem interação      |
+| Repository **variable** | `RAILWAY_SERVICE`          | não         | serviço padrão do projeto    | escolhe o serviço                    |
+| Repository **variable** | `RAILWAY_ENVIRONMENT`      | não         | ambiente padrão do projeto   | escolhe o ambiente                   |
+| Repository **variable** | `OPENAI_MODEL`             | não         | `gpt-5-mini`                 | troca o modelo                       |
+| Repository **variable** | `OPENAI_REASONING_EFFORT`  | não         | `low`                        | esforço de raciocínio                |
+| Repository **variable** | `OPENAI_MAX_OUTPUT_TOKENS` | não         | `2000`                       | teto da saída                        |
 
-Só os jobs de diagnóstico recebem o secret: `diagnose` (CI),
-`deployment-diagnosis` (pós-deployment) e `assess` (deploy assistido). Os gates
-técnicos — `quality`, `tests`, `build`, `docker-build`, `ci-gate`,
-`post-deploy-smoke-test` e `cd-gate` — **não** o veem, porque nenhum deles chama
-a OpenAI.
+Os padrões são resolvidos **no código** (`automation/src/openai-config.mjs`,
+`automation/src/railway-cli.mjs`), nunca no YAML: dois padrões em dois arquivos
+viram dois padrões diferentes na primeira divergência.
+
+**Em qual job cada secret entra — e onde nunca entra:**
+
+| Job                                  | `OPENAI_API_KEY` | `RAILWAY_TOKEN` |
+| ------------------------------------ | ---------------- | --------------- |
+| `diagnose` (CI)                      | **sim**          | não             |
+| `operational-deployment-diagnosis`   | **sim**          | não             |
+| `assess` (deploy assistido)          | **sim**          | não             |
+| `collect-railway-evidence`           | não              | **sim**         |
+| `quality`, `tests`, `build`, `docker-build` | não       | não             |
+| `ci-gate`, `post-deploy-smoke-test`, `cd-gate` | não    | não             |
+| `collect-ci-evidence`, `publish-operational-report` | não | não        |
+| **Container da aplicação (Railway)** | **nunca**        | **nunca**       |
+
+Os gates técnicos não veem secret nenhum porque nenhum deles chama serviço
+externo. E o container da CopaFigurinhas não recebe nenhum dos dois: ele não
+chama a OpenAI nem a API do Railway.
+
+Essa tabela é verificada por teste — `automation/tests/operational-workflow.test.mjs`
+lê o YAML e reprova se um secret aparecer num job que não deveria vê-lo.
+
+Como criar um **Project Token restrito** do Railway, como rotacioná-lo e como
+removê-lo: [`docs/railway-setup.md`](docs/railway-setup.md).
 
 No `post-deploy.yml`, disparado por `workflow_run`, a chave só é entregue quando
 a origem é confiável: disparo manual, ou CI **aprovado** vindo de um **push** na
@@ -598,9 +701,12 @@ com diagnóstico, via fallback.
 `NODE_ENV` são fornecidos pela plataforma e pela imagem; `RAILWAY_GIT_COMMIT_SHA`
 é preenchido automaticamente e vira o `commitSha` do health check.
 
-> **Não cadastre `OPENAI_API_KEY` no Railway.** O container da CopaFigurinhas
-> não chama a OpenAI: quem chama são os workflows do GitHub e os scripts locais
-> de automação. Uma chave lá seria superfície de exposição sem nenhum uso.
+> **Não cadastre `OPENAI_API_KEY` nem `RAILWAY_TOKEN` no Railway.** O container
+> da CopaFigurinhas não chama a OpenAI (quem chama são os workflows do GitHub e
+> os scripts locais de automação) e não chama a API do Railway (quem chama é o
+> job `collect-railway-evidence`). Qualquer uma das duas chaves lá seria
+> superfície de exposição sem nenhum uso — e um token dentro do próprio
+> container que ele governa é a pior versão disso.
 
 > Valores reais nunca vão para os arquivos de exemplo, e a `APP_BASE_URL` nunca
 > é escrita dentro do YAML.

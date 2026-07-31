@@ -120,6 +120,63 @@ mudou com a entrada do Railway.
   `gateResultsSchema`, em `buildCiSource` (`DOCKER_RESULT` + `docker.log`), nos
   dois workflows e nos testes. Não existe meio gate.
 
+## Relatório operacional do Dia 1 (CI → CD → runtime)
+
+Reúne **artefatos do CI, logs internos do Railway e o log do smoke test** num
+relatório único — JSON, Markdown e **HTML autônomo**
+(`operational-deployment-report.*`). Ver `docs/day-1-operational-logs.md`.
+
+- **Um vocabulário de fases, num lugar só.** `OPERATIONAL_PHASES` vive no schema
+  (`operational-diagnosis-schema.mjs`) e é reexportado pelo agregador. Ele serve
+  ao mesmo tempo à fase afetada, à fase de cada fato e à fase de cada evento da
+  linha do tempo. Duas listas parecidas divergiriam na primeira fase nova — e a
+  divergência aparece como erro de schema com o relatório pronto.
+- **Log estruturado é contrato, não hábito.** `backend/src/logging/structured-logger.js`
+  define `schemaVersion`, `eventType` e `phase`, e a lista de campos opcionais é
+  **fechada** (`OPTIONAL_FIELDS`). O que não está nela é descartado: um objeto
+  despejado por engano é como header e corpo vazam para um artefato de CI.
+- **`level` vence regex.** Na seleção de fatos, `level: 'error'` é o sinal — ele
+  foi atribuído na origem e não depende de a mensagem estar em português. É para
+  isso que o log estruturado existe.
+- **Ruído de subida não é evidência.** `ECONNREFUSED` e `HTTP 502` nas primeiras
+  tentativas são o container subindo. Quando o health check acabou passando, o
+  classificador os descarta; quando não passou, eles viram a evidência
+  principal. O filtro é condicional, nunca absoluto.
+- **O deployment mais recente não é presumido o correto.** A correlação usa o
+  SHA quando a plataforma o fornece (aceitando abreviação de ≥ 7) e declara
+  `partial` quando não fornece. `mismatch` vence toda outra fase: logs de outra
+  release não sustentam conclusão sobre o commit em análise.
+- **Ausência de dado não é má notícia.** `railwayDeployment: 'unknown'` nunca
+  produz `failure` em `deriveTechnicalStatus`. Só `failed` e `crashed` contam —
+  do contrário um token expirado reprovaria um deployment saudável.
+- **O bruto do Railway não sai do `$RUNNER_TEMP`.** Sanitiza, copia para
+  `reports/`, apaga o bruto. **Sem `tee`**: `tee` imprime no terminal do Actions,
+  que é público na execução. `stderr` da CLI vira categoria, nunca texto.
+- **Versão da CLI fixada em dois lugares que precisam concordar:**
+  `RAILWAY_CLI_VERSION` em `railway-cli.mjs` e o step de instalação no workflow.
+  Nunca `latest`.
+- **Artefato do CI vem por `run-id`.** Nunca "última execução": entre o CI e a
+  validação pode ter entrado outro push, e correlacionar com o CI errado é pior
+  que não correlacionar. O conteúdo baixado é texto não confiável e **nunca** é
+  executado.
+- **Inferência sem fato não existe.** Não é filtro aplicado depois: é condição
+  para ser gerada. Fato citado pelo modelo é conferido contra o material
+  (`groundObservedFacts`), os `id` são renumerados e `supportedBy` é remapeado —
+  sem o remapeamento, remover `F2` faria quem citava `F3` apontar para o fato
+  errado.
+- **Causa tem força, não certeza.** `causeStrength` distingue
+  `direct_evidence`, `probable`, `weak_hypothesis` e `unavailable`. O
+  classificador determinístico nunca emite o primeiro: padrão sustenta hipótese.
+- **Tudo que entra no HTML passa por `escapeHtml`.** Log de CI, saída da CLI e
+  texto de modelo são três fontes não confiáveis, e o HTML é um arquivo que
+  alguém abre no navegador. Não existe "escapar só um pouquinho" em
+  `html-escape.mjs`.
+- **O `cd-gate` declara `needs: [post-deploy-smoke-test]` e nada mais.**
+  `automation/tests/operational-workflow.test.mjs` lê o YAML e reprova se essa
+  lista crescer, se um secret aparecer no job errado ou se o Summary passar a
+  despejar o relatório inteiro. É a invariante do dia, e ela vive num arquivo
+  que nenhum teste de unidade cobriria.
+
 ## Comandos principais
 
 ```bash
@@ -148,6 +205,12 @@ npm run docker:down          # docker compose down
 npm run deployment:smoke     # smoke test contra APP_BASE_URL
 npm run deployment:analyze   # diagnóstico do log de deployment
 npm run deployment:analyze -- --log samples/deployment/startup-failure.log --status failure
+
+npm run operational:report                        # relatório operacional a partir de reports/
+npm run operational:fixture -- success            # cenário saudável versionado
+npm run operational:fixture -- functional-failure # health 200, /api/report 500
+
+RAILWAY_LIVE_TEST=true npm run railway:collect    # única coleta real do Railway
 ```
 
 Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
@@ -170,6 +233,11 @@ Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
 - Logs de contingência do deployment: `samples/deployment/<cenário>.log`
   (material didático versionado — precisam da negação em `.gitignore` para
   escapar da regra `*.log`).
+- Cenários operacionais completos: `samples/operational/<cenário>/` com
+  `lint.log`, `tests.log`, `build.log`, `docker.log`, `railway-*.jsonl`,
+  `deployment.log`, `smoke-test.json`, `collection-metadata.json` e
+  `ci-results.json` (mesma negação no `.gitignore`).
+- Logging da aplicação: `backend/src/logging/structured-logger.js`.
 
 ## Restrições
 
@@ -186,8 +254,12 @@ Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
   A única chamada de rede do projeto é a do agente à OpenAI — e ela é opcional.
 - **Não** imprimir `Authorization`, cookies ou corpo de requisição nos logs.
 - **Não** enviar conteúdo não mascarado ao modelo.
-- **Não** cadastrar `OPENAI_API_KEY` no Railway: o container não chama a OpenAI.
-  A chave existe nos jobs de diagnóstico do GitHub e no `automation/.env` local.
+- **Não** cadastrar `OPENAI_API_KEY` nem `RAILWAY_TOKEN` no Railway: o container
+  não chama a OpenAI nem a API da plataforma. A chave da OpenAI existe nos jobs
+  de diagnóstico do GitHub e no `automation/.env` local; o `RAILWAY_TOKEN`
+  existe **apenas** no job `collect-railway-evidence`.
+- **Não** fazer coleta real do Railway em `npm test` ou `npm run ci`: exige
+  `RAILWAY_LIVE_TEST=true` **e** o token. Os testes injetam CLI falsa.
 - **Não** entregar a chave a job que não diagnostica, nem usar
   `pull_request_target`, nem fazer checkout de código não confiável em job com
   acesso ao secret.

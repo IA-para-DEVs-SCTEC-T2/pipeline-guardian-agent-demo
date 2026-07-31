@@ -25,8 +25,13 @@ tem a dizer** — para no fim conseguir responder a uma pergunta:
 | 6 | Comparar log × diagnóstico do Guardian   | 20min |
 | 7 | Merge e deployment no Railway            | 15min |
 | 8 | Validação pós-deployment                 | 20min |
-| 9 | Analisar o relatório da IA               | 20min |
+| 9 | Analisar o relatório operacional (HTML)  | 20min |
 | 10| Provar que o gate não depende da IA      | 10min |
+
+A atividade individual de leitura de evidências está em
+**[`day-1-evidence-review.md`](day-1-evidence-review.md)** (20 a 30 min) e a
+referência técnica completa do fluxo, em
+**[`day-1-operational-logs.md`](day-1-operational-logs.md)**.
 
 ---
 
@@ -317,11 +322,81 @@ aplicação passou a responder.
 
 ---
 
-## 9. Analisar o relatório da IA (20 min)
+## 9. Analisar o relatório operacional (20 min)
 
-Ainda em **Post-deploy validation**, abra o Job Summary do job
-`deployment-diagnosis`. O relatório separa quatro coisas que costumam vir
-misturadas:
+Ainda em **Post-deploy validation**, role até **Artifacts** e baixe
+`operational-deployment-report-<sha>`. Abra
+**`operational-deployment-report.html`** no navegador — é a saída principal do
+dia, e o arquivo é autônomo: funciona offline, sem CDN e sem servidor.
+
+O Job Summary traz só o essencial e o link; o relatório inteiro está no HTML.
+
+### O que o relatório reúne
+
+Diferente do diagnóstico anterior (que via só o smoke test), este relatório
+junta **três fontes**:
+
+```text
+CI ........... lint, tests, build, docker  (artefatos da execução que disparou o workflow)
+Railway ...... build, deploy, runtime      (logs internos da plataforma)
+Smoke test ... health check + rota funcional
+```
+
+Comece pela seção **Cobertura das fontes**. Ela diz, fonte a fonte, o que foi
+`coletado` e o que ficou `ausente`. Sem `RAILWAY_TOKEN` configurado, os três do
+Railway aparecem como ausentes e um aviso explícito diz o porquê — o relatório
+sai igual, declarando a lacuna.
+
+### As quatro categorias
+
+O relatório separa, com **rótulo textual** (não só cor):
+
+| Rótulo             | O que é                                                |
+| ------------------ | ------------------------------------------------------ |
+| `[FATO]`           | trecho que **existe** no material — com ID, fonte, fase e timestamp |
+| `[INFERÊNCIA]`     | **dedução** a partir dos fatos — mostra **quais** fatos a sustentam |
+| `[RECOMENDAÇÃO]`   | ação acionável                                          |
+| `[LIMITAÇÃO]`      | o que o material **não** permite afirmar                 |
+
+Clique no ID de um fato citado por uma inferência: o link leva ao fato. Se uma
+inferência não conseguisse apontar nenhum fato válido, ela **não estaria lá** —
+o agente a remove e declara a remoção nas limitações.
+
+### Três coisas para localizar
+
+1. **A correlação do SHA.** O commit que o CI aprovou é o mesmo que está no ar?
+   (`matched`, `partial`, `mismatch`, `unknown`.) Um `mismatch` aparece
+   destacado antes de qualquer outra análise.
+2. **A força da causa.** Procure o campo *força da afirmação*:
+   `comprovada diretamente pelo log`, `causa provável`, `hipótese fraca` ou
+   `não foi possível apontar uma causa`. O classificador determinístico **nunca**
+   emite a primeira: padrão sustenta hipótese, não causa comprovada.
+3. **A seção "O que a IA não pode afirmar".** Ela está no relatório, e não só na
+   documentação, porque é lida no momento em que alguém está tentado a tratar o
+   texto do modelo como veredito.
+
+### Os dois cenários, sem depender do Railway
+
+```bash
+npm run operational:fixture -- success
+npm run operational:fixture -- functional-failure
+open reports/operational-deployment-report.html
+```
+
+**Exercício.** Nos dois cenários o CI passou, o Docker passou, o Railway
+construiu e a aplicação subiu. Abra os dois e responda:
+
+1. No cenário saudável, o log do smoke test **tem** `ECONNREFUSED` e `HTTP 502`
+   nas primeiras tentativas. Por que nenhuma dessas linhas virou um `[FATO]`?
+2. No cenário de falha, `/api/health` respondeu **200** e `/api/report`
+   respondeu **500**. Qual das duas prova que o processo está vivo? Qual prova
+   que a funcionalidade quebrou?
+3. Qual fato veio do **log interno** da aplicação e explica o `HTTP 500` que o
+   smoke test só conseguiu constatar de fora?
+
+### O diagnóstico anterior continua existindo
+
+O relatório focado só no smoke test segue disponível e é mais simples de ler:
 
 | Seção              | O que é                                              |
 | ------------------ | ---------------------------------------------------- |
@@ -426,7 +501,8 @@ Nada aqui depende de tudo funcionar. Escolha a coluna que se aplica:
 
 | Se isto falhar…                          | Faça isto                                                                 |
 | ---------------------------------------- | ------------------------------------------------------------------------- |
-| **Railway fora do ar ou conta sem acesso** | Pule as etapas 7 e 8. Use `samples/deployment/*.log` na etapa 9 — eles são logs reais de smoke test, versionados no repositório. |
+| **Railway fora do ar ou conta sem acesso** | Pule as etapas 7 e 8. Use `npm run operational:fixture -- success` e `-- functional-failure` na etapa 9 — os cenários completos estão versionados em `samples/operational/`. Os logs de smoke test isolados continuam em `samples/deployment/*.log`. |
+| **Sem `RAILWAY_TOKEN`**                    | Nada a fazer: a coleta da plataforma é best-effort. O relatório sai declarando os logs do Railway como **ausentes**, e o `cd-gate` não muda. É um bom momento para mostrar a seção *Cobertura das fontes*. |
 | **API da OpenAI indisponível ou sem chave** | Nada a fazer: o fallback determinístico assume sozinho. Confira `usedFallback: true` no relatório e siga o roteiro. |
 | **Integração GitHub↔Railway com problema** | Use `workflow_dispatch` em **Post-deploy validation** apontando para uma URL que você controle, ou rode `npm run deployment:smoke` contra o container local (`docker compose up`). |
 | **Actions indisponível / sem minutos**     | Reproduza o CI localmente: `npm run ci`, depois `npm run docker:build`, depois `npm run agent:fixture -- test`. |

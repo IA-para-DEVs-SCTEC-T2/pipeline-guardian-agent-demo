@@ -1,19 +1,33 @@
 name: Post-deploy validation
 
-# Validação pós-deployment.
+# Validação pós-deployment e relatório operacional.
 #
 # Quem implanta é o Railway, pela integração com o GitHub. Este workflow NÃO
 # implanta, não altera infraestrutura e não promove nada: ele olha para a
-# aplicação que já está no ar e responde se ela atende.
+# aplicação que já está no ar, reúne as evidências de CI, plataforma e runtime,
+# e responde se ela atende.
 #
-# Três responsabilidades, três jobs, de propósito:
+# Seis jobs, e a separação de papéis é o assunto da aula:
 #
-#   post-deploy-smoke-test   verifica (determinístico, é o gate de verdade)
-#   deployment-diagnosis     explica (informativo, roda mesmo em falha)
-#   cd-gate                  decide (só olha o resultado do smoke test)
+#   collect-ci-evidence               COLETA      artefatos do CI que disparou este workflow
+#   post-deploy-smoke-test            VERIFICA    determinístico, é o gate de verdade
+#   collect-railway-evidence          COLETA      logs internos da plataforma (best-effort)
+#   operational-deployment-diagnosis  EXPLICA     informativo, roda mesmo em falha
+#   publish-operational-report        PUBLICA     JSON, Markdown e HTML
+#   cd-gate                           DECIDE      lê SÓ o resultado do smoke test
+#
+# Nenhum job de coleta ou de explicação pode reprovar a validação. A IA não é
+# condição de aprovação em lugar nenhum deste arquivo.
 
 on:
   # Depois que o CI concluir na main. Sem CI aprovado, nada aqui roda.
+  #
+  # `workflow_run` (e não `deployment_status`) continua sendo o gatilho de
+  # propósito: é o que já está validado e é o que dá acesso ao `run_id` do CI,
+  # necessário para baixar os artefatos da execução CERTA. Migrar para
+  # `deployment_status` traria o estado real da plataforma e é uma evolução
+  # possível — mas é uma mudança de superfície de segurança, e não se faz isso
+  # na véspera da aula.
   workflow_run:
     workflows: ["CI"]
     types:
@@ -29,13 +43,20 @@ on:
         type: string
         required: false
         default: main
+      railway_service:
+        description: Serviço do Railway (vazio = variável do repositório)
+        type: string
+        required: false
+      railway_environment:
+        description: Ambiente do Railway (vazio = variável do repositório)
+        type: string
+        required: false
 
-# Permissão mínima: nenhum job deste workflow escreve no repositório.
+# Permissão mínima. Nenhum job deste workflow escreve no repositório; o job que
+# baixa artefatos da execução do CI recebe `actions: read` e só ele.
 permissions:
   contents: read
 
-# Uma validação por commit. `cancel-in-progress: false`: um smoke test em
-# andamento não deve ser interrompido por um disparo novo.
 concurrency:
   group: post-deploy-${{ github.event.workflow_run.head_sha || inputs.ref || github.ref }}
   cancel-in-progress: false
@@ -48,39 +69,168 @@ env:
   TERM: dumb
 
   # ---- Configuração da espera, num lugar só ----------------------------
-  # 30 tentativas × 10s = até 5 minutos aguardando a nova versão responder.
-  # Ajuste aqui para encurtar a demonstração em aula.
   SMOKE_MAX_ATTEMPTS: "30"
   SMOKE_INTERVAL_SECONDS: "10"
   SMOKE_REQUEST_TIMEOUT_MS: "10000"
 
 jobs:
   # ---------------------------------------------------------------------
-  # post-deploy-smoke-test — a verificação técnica.
+  # resolve-context — o commit e a execução de CI que este workflow analisa.
   #
-  # Determinístico: o veredito vem de código HTTP e do corpo da resposta.
-  # Nenhum modelo participa. Este job é o único que pode reprovar a
-  # validação, e o log que ele produz é a matéria-prima do diagnóstico.
+  # Existe para que os outros cinco jobs leiam UMA resposta em vez de repetir
+  # a mesma expressão `||` encadeada cinco vezes — e divergirem na primeira vez
+  # que uma delas mudar.
   # ---------------------------------------------------------------------
-  post-deploy-smoke-test:
-    name: Smoke test pós-deployment
+  resolve-context:
+    name: Resolver contexto da release
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 5
 
-    # Disparo automático apenas para CI APROVADO. CI reprovado não chega aqui.
     if: >-
       ${{
         github.event_name == 'workflow_dispatch' ||
         github.event.workflow_run.conclusion == 'success'
       }}
 
+    outputs:
+      sha: ${{ steps.context.outputs.sha }}
+      short_sha: ${{ steps.context.outputs.short_sha }}
+      ci_run_id: ${{ steps.context.outputs.ci_run_id }}
+      has_ci_run: ${{ steps.context.outputs.has_ci_run }}
+
     steps:
-      # O commit validado é o que o CI aprovou — não o `main` de agora, que
-      # pode já ter avançado enquanto o deployment acontecia.
+      - name: Resolver commit e execução do CI
+        id: context
+        shell: bash
+        env:
+          # Interpolação só em variável de ambiente, nunca dentro do script.
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          INPUT_REF: ${{ inputs.ref }}
+          FALLBACK_SHA: ${{ github.sha }}
+        run: |
+          SHA="${RUN_SHA:-${INPUT_REF:-$FALLBACK_SHA}}"
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${SHA:0:7}" >> "$GITHUB_OUTPUT"
+
+          if [ -n "$RUN_ID" ]; then
+            echo "ci_run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+            echo "has_ci_run=true" >> "$GITHUB_OUTPUT"
+            echo "Execução de CI de origem: $RUN_ID (commit $SHA)."
+          else
+            # `workflow_dispatch` não tem execução de CI anterior. Declarar a
+            # ausência é melhor que buscar "a última execução": a última pode
+            # ser de outro commit, e correlacionar deployment com o CI errado
+            # é pior que não correlacionar.
+            echo "ci_run_id=" >> "$GITHUB_OUTPUT"
+            echo "has_ci_run=false" >> "$GITHUB_OUTPUT"
+            echo "Disparo manual: não há execução de CI anterior a que se referir."
+          fi
+
+  # ---------------------------------------------------------------------
+  # collect-ci-evidence — os quatro logs do CI que disparou este workflow.
+  #
+  # Baixa por `run-id`, não por "última execução": entre o CI e este job pode
+  # ter entrado outro push, e pegar o artefato errado produziria um relatório
+  # que descreve o commit de outra pessoa.
+  #
+  # Nada do que é baixado é executado. São arquivos de texto não confiável, e
+  # o único uso deles é virar trecho citado no relatório.
+  # ---------------------------------------------------------------------
+  collect-ci-evidence:
+    name: Coletar evidências do CI
+    needs: resolve-context
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Sem secrets externos. `actions: read` é o mínimo para ler artefatos de
+    # outra execução do mesmo repositório.
+    permissions:
+      contents: read
+      actions: read
+
+    steps:
+      - name: Preparar diretório de evidências
+        run: mkdir -p reports/evidence/ci
+
+      # Best-effort, um a um: um job do CI que falhou antes de publicar o
+      # artefato não pode derrubar a coleta dos outros três.
+      - name: Baixar lint log
+        if: ${{ needs.resolve-context.outputs.has_ci_run == 'true' }}
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: lint-log
+          path: reports/evidence/ci
+          run-id: ${{ needs.resolve-context.outputs.ci_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Baixar tests log
+        if: ${{ needs.resolve-context.outputs.has_ci_run == 'true' }}
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: tests-log
+          path: reports/evidence/ci
+          run-id: ${{ needs.resolve-context.outputs.ci_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Baixar build log
+        if: ${{ needs.resolve-context.outputs.has_ci_run == 'true' }}
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: build-log
+          path: reports/evidence/ci
+          run-id: ${{ needs.resolve-context.outputs.ci_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Baixar docker log
+        if: ${{ needs.resolve-context.outputs.has_ci_run == 'true' }}
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: docker-log
+          path: reports/evidence/ci
+          run-id: ${{ needs.resolve-context.outputs.ci_run_id }}
+          github-token: ${{ github.token }}
+
+      - name: Inventário do que foi coletado
+        shell: bash
+        run: |
+          # `ls`, nunca `cat`: o conteúdo é texto não confiável e o terminal do
+          # Actions é público na execução. Quem lê o log é o agente, depois de
+          # sanitizar.
+          echo "Evidências do CI coletadas:"
+          ls -l reports/evidence/ci || echo "(nenhuma)"
+
+      - name: Publicar evidências do CI
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-evidence-${{ needs.resolve-context.outputs.short_sha }}
+          path: reports/evidence/ci
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------
+  # post-deploy-smoke-test — a verificação técnica.
+  #
+  # Determinístico: o veredito vem de código HTTP e do corpo da resposta.
+  # Nenhum modelo participa. Este job é o único que pode reprovar a validação.
+  # Seu comportamento não mudou com a entrada do relatório operacional.
+  # ---------------------------------------------------------------------
+  post-deploy-smoke-test:
+    name: Smoke test pós-deployment
+    needs: resolve-context
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
       - name: Checkout do commit implantado
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.ref || github.ref }}
+          ref: ${{ needs.resolve-context.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -93,8 +243,6 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # A URL chega por variável de ambiente, nunca interpolada dentro do
-      # shell — e o YAML não guarda o endereço.
       - name: Validar APP_BASE_URL
         shell: bash
         env:
@@ -118,13 +266,9 @@ jobs:
         shell: bash
         env:
           APP_BASE_URL: ${{ vars.APP_BASE_URL }}
-          # Espera a NOVA versão responder, não uma anterior que ainda esteja
-          # no ar. Se a aplicação não souber informar o commit, o smoke test
-          # aceita e registra a limitação no log.
-          SMOKE_EXPECT_COMMIT_SHA: ${{ github.event.workflow_run.head_sha }}
+          SMOKE_EXPECT_COMMIT_SHA: ${{ needs.resolve-context.outputs.sha }}
         run: node automation/src/smoke-test.mjs
 
-      # `always()`: o log em falha é justamente o que interessa ao diagnóstico.
       - name: Publicar log da validação
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
@@ -136,44 +280,44 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-      - name: Resumo do smoke test
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          {
-            echo "## 🔎 Smoke test pós-deployment"
-            echo
-            if [ -f reports/deployment.log ]; then
-              echo '```text'
-              tail -n 25 reports/deployment.log
-              echo '```'
-            else
-              echo "Nenhum log foi produzido — a validação não chegou a executar."
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
-
   # ---------------------------------------------------------------------
-  # deployment-diagnosis — a explicação.
+  # collect-railway-evidence — os logs internos da plataforma.
   #
-  # Roda com `always()`: um deployment quebrado é exatamente o caso em que
-  # a explicação vale mais. É INFORMATIVO — não sobrescreve o resultado do
-  # smoke test e não reprova nada (`continue-on-error: true`).
+  # É o job que responde o que o smoke test nunca conseguiu responder: o que
+  # aconteceu DENTRO do container. Roda com `always()` porque um deployment
+  # quebrado é exatamente o caso em que o log interno vale mais.
+  #
+  # Recebe `RAILWAY_TOKEN` e MAIS NADA. Não recebe `OPENAI_API_KEY`, não faz
+  # checkout de código não confiável e não pode reprovar o workflow.
+  #
+  # `needs: post-deploy-smoke-test` não é dependência de resultado: é espera.
+  # Quando o smoke test termina, a plataforma já teve tempo de gerar os logs de
+  # build, deploy e runtime que este job vai buscar.
   # ---------------------------------------------------------------------
-  deployment-diagnosis:
-    name: Diagnóstico do deployment (IA)
-    needs: post-deploy-smoke-test
+  collect-railway-evidence:
+    name: Coletar logs do Railway
+    needs:
+      - resolve-context
+      - post-deploy-smoke-test
 
-    if: ${{ always() && needs.post-deploy-smoke-test.result != 'skipped' }}
+    if: ${{ always() && needs.resolve-context.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
+    # Best-effort de ponta a ponta: nem uma falha de step reprova a validação.
     continue-on-error: true
+
+    # O contexto `secrets` não existe em `if:` de step — só em `env:`. Reduzir
+    # o segredo a um booleano aqui é o que permite pular a instalação da CLI
+    # quando não há token, sem que o valor apareça em condição nenhuma.
+    env:
+      HAS_RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN != '' && 'true' || 'false' }}
 
     steps:
       - name: Checkout do commit implantado
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.event.workflow_run.head_sha || inputs.ref || github.ref }}
+          ref: ${{ needs.resolve-context.outputs.sha }}
           persist-credentials: false
 
       - name: Setup Node
@@ -186,20 +330,123 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      # Best-effort: sem o log, o agente ainda produz um diagnóstico válido,
-      # declarando a ausência como limitação.
-      - name: Baixar log da validação
+      # Versão EXATA, nunca `latest`. A mesma constante está em
+      # `automation/src/railway-cli.mjs` e em `docs/railway-setup.md`.
+      - name: Instalar Railway CLI (versão fixada)
+        if: ${{ env.HAS_RAILWAY_TOKEN == 'true' }}
+        shell: bash
+        run: |
+          npm install -g @railway/cli@5.30.1
+          railway --version
+
+      - name: Coletar build, deploy e runtime
+        shell: bash
+        env:
+          # O ÚNICO job deste workflow que recebe o token da plataforma.
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+
+          # Configuração, não segredo.
+          RAILWAY_PROJECT: ${{ vars.RAILWAY_PROJECT }}
+          RAILWAY_SERVICE: ${{ inputs.railway_service || vars.RAILWAY_SERVICE }}
+          RAILWAY_ENVIRONMENT: ${{ inputs.railway_environment || vars.RAILWAY_ENVIRONMENT }}
+          EXPECTED_COMMIT_SHA: ${{ needs.resolve-context.outputs.sha }}
+
+          # Opt-in explícito para tocar a plataforma. Aqui a chamada real é o
+          # objetivo do job — e declará-la no YAML deixa isso visível para quem
+          # lê o workflow, em vez de escondido numa condição do código. Fora
+          # daqui (linha de comando, testes) a coleta real não acontece sem
+          # alguém digitar isto de propósito.
+          RAILWAY_LIVE_TEST: "true"
+        run: |
+          # O coletor grava o bruto em $RUNNER_TEMP, sanitiza, copia para
+          # reports/railway/ e apaga o bruto. Sem `tee`: o terminal do Actions
+          # é público na execução e não pode receber log de plataforma cru.
+          node automation/src/collect-railway-evidence.mjs
+
+      - name: Publicar evidências do Railway (já sanitizadas)
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: railway-evidence-${{ needs.resolve-context.outputs.short_sha }}
+          path: reports/railway
+          if-no-files-found: warn
+          retention-days: 30
+
+  # ---------------------------------------------------------------------
+  # operational-deployment-diagnosis — a explicação.
+  #
+  # Depende das TRÊS fontes e roda com `always()`: uma release quebrada é
+  # exatamente o caso em que a explicação vale mais. É INFORMATIVO — não
+  # sobrescreve o resultado do smoke test e não reprova nada.
+  # ---------------------------------------------------------------------
+  operational-deployment-diagnosis:
+    name: Diagnóstico operacional (IA)
+    needs:
+      - resolve-context
+      - collect-ci-evidence
+      - post-deploy-smoke-test
+      - collect-railway-evidence
+
+    if: ${{ always() && needs.resolve-context.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    continue-on-error: true
+
+    steps:
+      - name: Checkout do commit implantado
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ needs.resolve-context.outputs.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Todos best-effort: cada artefato ausente vira limitação declarada no
+      # relatório, nunca exceção. Só artefatos JÁ SANITIZADOS são baixados aqui.
+      - name: Baixar evidências do CI
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: ci-evidence-${{ needs.resolve-context.outputs.short_sha }}
+          path: reports/evidence/ci
+
+      - name: Baixar log do smoke test
         uses: actions/download-artifact@v8
         continue-on-error: true
         with:
           name: deployment-log
           path: reports
 
-      - name: Executar diagnóstico
+      - name: Baixar evidências do Railway
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: railway-evidence-${{ needs.resolve-context.outputs.short_sha }}
+          path: reports/railway
+
+      - name: Gerar relatório operacional
         env:
           GITHUB_REPOSITORY: ${{ github.repository }}
-          GITHUB_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+          GITHUB_SHA: ${{ needs.resolve-context.outputs.sha }}
+          EXPECTED_COMMIT_SHA: ${{ needs.resolve-context.outputs.sha }}
           APP_BASE_URL: ${{ vars.APP_BASE_URL }}
+
+          # Resultados dos jobs do CI que disparou este workflow. Em disparo
+          # manual não existem, e o relatório declara `ci: unknown` — o que é
+          # diferente de `ci: failure`.
+          QUALITY_RESULT: ${{ github.event.workflow_run.conclusion == 'success' && 'success' || '' }}
+          TESTS_RESULT: ${{ github.event.workflow_run.conclusion == 'success' && 'success' || '' }}
+          BUILD_RESULT: ${{ github.event.workflow_run.conclusion == 'success' && 'success' || '' }}
+          DOCKER_RESULT: ${{ github.event.workflow_run.conclusion == 'success' && 'success' || '' }}
 
           # A chave só é entregue quando a origem da execução é confiável:
           # disparo manual (exige permissão de escrita no repositório) ou um
@@ -211,9 +458,9 @@ jobs:
           # chave — e é também por isso que este workflow não usa
           # `pull_request_target` nem faz checkout de head de PR.
           #
-          # Quando a condição não vale, a variável chega vazia: o agente cai no
-          # classificador determinístico e o diagnóstico continua saindo
-          # (`usedFallback: true`). Perde-se a explicação, não a validação.
+          # Sem a chave, o agente cai no classificador determinístico e o
+          # relatório continua saindo (`usedFallback: true`). Perde-se a
+          # explicação, não a validação.
           OPENAI_API_KEY: >-
             ${{
               (github.event_name == 'workflow_dispatch' ||
@@ -227,46 +474,124 @@ jobs:
           OPENAI_MODEL: ${{ vars.OPENAI_MODEL }}
           OPENAI_REASONING_EFFORT: ${{ vars.OPENAI_REASONING_EFFORT }}
           OPENAI_MAX_OUTPUT_TOKENS: ${{ vars.OPENAI_MAX_OUTPUT_TOKENS }}
-        run: node automation/src/analyze-deployment.mjs
+        run: node automation/src/operational-report.mjs
 
-      - name: Publicar diagnóstico no Job Summary
-        if: ${{ always() }}
-        shell: bash
-        run: |
-          if [ -f reports/deployment-diagnosis.md ]; then
-            cat reports/deployment-diagnosis.md >> "$GITHUB_STEP_SUMMARY"
-          else
-            {
-              echo "## Diagnóstico do deployment"
-              echo
-              echo "O diagnóstico não foi gerado. O resultado técnico do deployment"
-              echo "continua sendo o do job \`post-deploy-smoke-test\`."
-            } >> "$GITHUB_STEP_SUMMARY"
-          fi
-
-      - name: Publicar diagnóstico como artefato
+      - name: Publicar relatório operacional
         if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
-          name: deployment-diagnosis
+          name: operational-report-files-${{ needs.resolve-context.outputs.short_sha }}
           path: |
-            reports/deployment-diagnosis.json
-            reports/deployment-diagnosis.md
+            reports/operational-deployment-report.json
+            reports/operational-deployment-report.md
+            reports/operational-deployment-report.html
+            reports/operational-context.json
+            reports/operational-timeline.json
           if-no-files-found: warn
           retention-days: 30
 
   # ---------------------------------------------------------------------
+  # publish-operational-report — a saída principal da demonstração.
+  #
+  # Publica os três relatórios num artefato de nome previsível e deixa no Job
+  # Summary um resumo CURTO com o link para baixá-lo. O relatório inteiro NÃO
+  # vai para o Summary de propósito: o HTML é a saída principal, e um Summary
+  # gigante compete com ele em vez de apontar para ele.
+  # ---------------------------------------------------------------------
+  publish-operational-report:
+    name: Publicar relatório operacional
+    needs:
+      - resolve-context
+      - post-deploy-smoke-test
+      - operational-deployment-diagnosis
+
+    if: ${{ always() && needs.resolve-context.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Não recebe secret nenhum: só move arquivos já sanitizados.
+    continue-on-error: true
+
+    steps:
+      - name: Baixar arquivos do relatório
+        uses: actions/download-artifact@v8
+        continue-on-error: true
+        with:
+          name: operational-report-files-${{ needs.resolve-context.outputs.short_sha }}
+          path: reports
+
+      - name: Publicar artefato final
+        id: upload
+        if: ${{ hashFiles('reports/operational-deployment-report.html') != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: operational-deployment-report-${{ needs.resolve-context.outputs.short_sha }}
+          path: |
+            reports/operational-deployment-report.json
+            reports/operational-deployment-report.md
+            reports/operational-deployment-report.html
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Resumo curto no Job Summary
+        if: ${{ always() }}
+        shell: bash
+        env:
+          SMOKE_RESULT: ${{ needs.post-deploy-smoke-test.result }}
+          DIAGNOSIS_RESULT: ${{ needs.operational-deployment-diagnosis.result }}
+          COMMIT_SHA: ${{ needs.resolve-context.outputs.sha }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_NAME: operational-deployment-report-${{ needs.resolve-context.outputs.short_sha }}
+        run: |
+          REPORT=reports/operational-deployment-report.json
+
+          {
+            echo "## 🛰️ Relatório operacional do deployment"
+            echo
+
+            if [ -f "$REPORT" ]; then
+              # `node -e` em vez de `jq`: o Node já está garantido no runner e
+              # o JSON é lido como dado, nunca interpolado no shell.
+              node -e '
+                const r = require("./reports/operational-deployment-report.json");
+                const t = r.technicalStatus;
+                const cov = Object.entries(r.sourceCoverage)
+                  .map(([k, v]) => `${k}=${v ? "sim" : "não"}`).join(" · ");
+                console.log(`- **Resultado técnico:** \`${t.overall}\` (ci=\`${t.ci}\` · railway=\`${t.railwayDeployment}\` · smoke=\`${t.smokeTest}\`)`);
+                console.log(`- **Commit:** \`${String(r.commitSha).slice(0, 7)}\` · correlação \`${r.correlationStatus}\``);
+                console.log(`- **Ambiente:** \`${r.environment ?? "não informado"}\``);
+                console.log(`- **Fase afetada:** \`${r.affectedPhase}\``);
+                console.log(`- **Cobertura das fontes:** ${cov}`);
+                console.log(`- **Origem do diagnóstico:** ${r.usedFallback ? "classificador determinístico (`usedFallback: true`)" : "modelo (`usedFallback: false`)"}`);
+              '
+            else
+              echo "- O relatório não foi gerado nesta execução."
+              echo "- O resultado técnico continua sendo o do job \`post-deploy-smoke-test\`: \`$SMOKE_RESULT\`."
+            fi
+
+            echo
+            if [ -n "$ARTIFACT_URL" ]; then
+              echo "📄 **[Baixar o relatório HTML]($ARTIFACT_URL)** — abra \`operational-deployment-report.html\` no navegador."
+            else
+              echo "📄 Relatório HTML no artefato \`$ARTIFACT_NAME\` desta execução."
+            fi
+
+            echo
+            echo "> A análise por IA é **informativa**. Quem aprova ou reprova o deployment é o smoke test determinístico (\`$SMOKE_RESULT\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # ---------------------------------------------------------------------
   # cd-gate — o resultado final.
   #
-  # Aguarda o diagnóstico terminar, mas decide APENAS pelo smoke test. A
-  # recomendação da IA não é condição de nada aqui: se ela fosse, um modelo
-  # otimista poderia aprovar um deployment quebrado.
+  # Aguarda o smoke test e decide APENAS por ele. Não depende dos jobs de
+  # coleta nem do diagnóstico, não recebe secret nenhum e não lê o relatório da
+  # IA. Se lesse, um modelo otimista poderia aprovar um deployment quebrado — e
+  # um alarmista poderia reprovar um saudável.
   # ---------------------------------------------------------------------
   cd-gate:
     name: CD Gate
     needs:
       - post-deploy-smoke-test
-      - deployment-diagnosis
 
     if: ${{ always() && needs.post-deploy-smoke-test.result != 'skipped' }}
     runs-on: ubuntu-latest
@@ -276,14 +601,13 @@ jobs:
       - name: Verificar resultado técnico
         shell: bash
         run: |
-          echo "smoke test: ${{ needs.post-deploy-smoke-test.result }}  (gate técnico)"
-          echo "diagnóstico: ${{ needs.deployment-diagnosis.result }}  (INFORMATIVO — não entra nesta decisão)"
+          echo "smoke test: ${{ needs.post-deploy-smoke-test.result }}  (gate técnico — única entrada desta decisão)"
           echo
 
           if [ "${{ needs.post-deploy-smoke-test.result }}" != "success" ]; then
             echo "CD Gate: falhou."
-            echo "A validação pós-deployment não passou. Leia o diagnóstico no Job Summary"
-            echo "para entender o porquê — mas quem reprovou foi o smoke test."
+            echo "A validação pós-deployment não passou. Leia o relatório operacional para entender"
+            echo "o porquê — mas quem reprovou foi o smoke test."
             exit 1
           fi
 
