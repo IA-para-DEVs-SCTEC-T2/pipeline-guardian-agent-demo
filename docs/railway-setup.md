@@ -138,12 +138,140 @@ lugar, mas na aba certa:
 | **Variables** | `OPENAI_REASONING_EFFORT`  | não         | padrão no código: `low`        |
 | **Variables** | `OPENAI_MAX_OUTPUT_TOKENS` | não         | padrão no código: `2000`       |
 
-Sem o secret, o job `deployment-diagnosis` continua rodando e produzindo
-diagnóstico pelo classificador determinístico. Ele é o **único** job deste fluxo
-que recebe a chave — `post-deploy-smoke-test` e `cd-gate`, que são quem de fato
-aprova ou reprova, não a veem.
+Sem o secret, o job `operational-deployment-diagnosis` continua rodando e
+produzindo diagnóstico pelo classificador determinístico. Ele é o **único** job
+deste fluxo que recebe a chave — `post-deploy-smoke-test` e `cd-gate`, que são
+quem de fato aprova ou reprova, não a veem.
 
 > Nunca escreva a URL dentro do YAML e nunca versione token algum.
+
+---
+
+## Coleta dos logs internos do Railway (opcional)
+
+Sem esta seção, o relatório operacional continua sendo gerado — ele apenas
+declara que os logs da plataforma estão **ausentes** e trabalha com o que o CI e
+o smoke test viram. Com ela, o diagnóstico passa a enxergar o **interior do
+container**: build, inicialização e runtime.
+
+### 1. Criar um Project Token restrito
+
+No Railway: **Project Settings › Tokens › New Token**.
+
+| Escolha            | Valor                                              |
+| ------------------ | -------------------------------------------------- |
+| Tipo               | **Project Token** (não um token de conta)          |
+| Projeto            | apenas o projeto da CopaFigurinhas                  |
+| Ambiente           | apenas `production`                                 |
+| Nome               | algo rastreável, ex.: `github-actions-log-collector` |
+
+> ⚠️ Um **Project Token** vale só para um projeto e um ambiente. Um token de
+> conta daria acesso a **todos** os seus projetos a um workflow que só precisa
+> ler log de um. A diferença aparece no dia em que o token vaza.
+
+Copie o valor — ele só é exibido uma vez.
+
+### 2. Cadastrar como secret no GitHub
+
+**Settings › Secrets and variables › Actions › Secrets** › **New repository
+secret**:
+
+| Nome            | Valor                          |
+| --------------- | ------------------------------ |
+| `RAILWAY_TOKEN` | o Project Token do passo 1     |
+
+E, na aba **Variables** (não são segredos — são configuração):
+
+| Nome                  | Obrigatória | Exemplo            |
+| --------------------- | ----------- | ------------------ |
+| `RAILWAY_PROJECT`     | não\*       | `copa-figurinhas`  |
+| `RAILWAY_SERVICE`     | não         | `copa-figurinhas`  |
+| `RAILWAY_ENVIRONMENT` | não         | `production`       |
+
+\* Sem `RAILWAY_PROJECT`, a coleta depende do vínculo implícito do token e
+declara isso como limitação no relatório. Com ela, o vínculo é explícito e
+não interativo.
+
+### 3. Onde o token entra — e onde nunca entra
+
+| Job / destino                      | Recebe `RAILWAY_TOKEN`? |
+| ---------------------------------- | ----------------------- |
+| `collect-railway-evidence`         | **sim** — o único       |
+| `collect-ci-evidence`              | não                     |
+| `post-deploy-smoke-test`           | não                     |
+| `operational-deployment-diagnosis` | não                     |
+| `publish-operational-report`       | não                     |
+| `cd-gate`                          | não                     |
+| **Container da aplicação (Railway)** | **nunca**             |
+
+> **Não cadastre `RAILWAY_TOKEN` nas Variables do serviço no Railway.** A
+> aplicação não chama a API do Railway; o token existe para um job do GitHub
+> ler log. Um token dentro do próprio container que ele governa é superfície de
+> exposição sem nenhum uso.
+
+Um teste da suíte (`automation/tests/operational-workflow.test.mjs`) verifica
+essa tabela lendo o YAML: se alguém copiar o token para outro job numa
+refatoração, o teste reprova.
+
+### 4. Versão da Railway CLI
+
+O workflow instala uma versão **exata**:
+
+```bash
+npm install -g @railway/cli@5.30.1
+```
+
+Nunca `latest`. Uma CLI que muda de flag entre duas execuções transforma "a
+coleta falhou" num mistério — e a aula acontece numa data específica.
+
+Para atualizar: rode `npm view @railway/cli versions`, escolha a nova versão,
+confirme `railway logs --help` no runner e ajuste **os dois lugares** que
+declaram a versão:
+
+- `automation/src/railway-cli.mjs` → `RAILWAY_CLI_VERSION`
+- `.github/workflows/post-deploy.yml` → o step *Instalar Railway CLI*
+
+### 5. Testar a coleta de verdade
+
+A coleta real **não** roda em `npm test` nem em `npm run ci`. Para exercitá-la
+localmente, é preciso opt-in explícito **e** o token:
+
+```bash
+RAILWAY_LIVE_TEST=true \
+RAILWAY_TOKEN=xxxxx \
+RAILWAY_PROJECT=copa-figurinhas \
+RAILWAY_SERVICE=copa-figurinhas \
+RAILWAY_ENVIRONMENT=production \
+EXPECTED_COMMIT_SHA=$(git rev-parse HEAD) \
+  npm run railway:collect
+
+cat reports/railway/collection-metadata.json
+```
+
+Requer `npm install -g @railway/cli@5.30.1`. Sem token, o comando termina bem e
+grava um `collection-metadata.json` com `sourceCoverage.railway: false`.
+
+### 6. Rotacionar ou remover o token
+
+**Rotacionar:** crie um token novo no Railway, atualize o secret no GitHub e só
+então revogue o antigo (**Project Settings › Tokens › Revoke**). Nessa ordem —
+revogar primeiro deixaria a próxima execução sem coleta.
+
+**Remover de vez:** revogue no Railway e apague o secret no GitHub. O fluxo
+continua funcionando: o relatório passa a declarar os logs da plataforma como
+ausentes, e o `cd-gate` não muda em nada.
+
+### 7. Rodar sem o Railway
+
+Se o Railway estiver indisponível, sem acesso ou fora do escopo da aula:
+
+```bash
+npm run operational:fixture -- success
+npm run operational:fixture -- functional-failure
+```
+
+Os cenários em `samples/operational/` são material versionado e produzem os três
+relatórios sem rede nenhuma.
 
 ### 9. Fazer o primeiro deployment
 
@@ -187,10 +315,17 @@ Pull Request → CI (lint, testes, build, docker-build, diagnóstico, CI Gate)
         Railway implanta o container  ← integração GitHub↔Railway
                      │
      Post-deploy validation (GitHub Actions)
-        ├── post-deploy-smoke-test   determinístico, é o gate
-        ├── deployment-diagnosis     informativo, roda mesmo em falha
-        └── cd-gate                  decide só pelo smoke test
+        ├── resolve-context                    qual commit? qual execução de CI?
+        ├── collect-ci-evidence                baixa os artefatos do CI certo
+        ├── post-deploy-smoke-test             determinístico, é o gate
+        ├── collect-railway-evidence           build + deploy + runtime (best-effort)
+        ├── operational-deployment-diagnosis   informativo, roda mesmo em falha
+        ├── publish-operational-report         JSON + Markdown + HTML
+        └── cd-gate                            decide só pelo smoke test
 ```
+
+O detalhe completo do fluxo está em
+**[`docs/day-1-operational-logs.md`](day-1-operational-logs.md)**.
 
 ---
 
@@ -221,6 +356,10 @@ curl http://localhost:3001/api/health
 - **Sem banco, sem migrations, sem SQLite.** Fora do escopo desta entrega.
 - **O smoke test enxerga a borda.** Ele consulta a aplicação de fora e não tem
   acesso ao log interno do Railway. Todo diagnóstico gerado a partir dele
-  declara essa limitação.
+  declara essa limitação — e é essa limitação que o job
+  `collect-railway-evidence` remove **quando** a coleta funciona.
+- **A coleta da plataforma é best-effort.** Sem `RAILWAY_TOKEN`, com CLI ausente
+  ou com erro de autenticação, o relatório sai igual, declarando as fontes como
+  ausentes. Ela **nunca** reprova um deployment saudável.
 - **Dependência de disponibilidade.** Se o Railway estiver fora do ar, use os
   logs de contingência em `samples/deployment/` (ver `docs/day-1-lab.md`).

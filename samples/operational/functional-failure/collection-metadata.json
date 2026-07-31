@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "collectedAt": "2026-07-30T15:22:00.000Z",
+  "cliVersion": "5.30.1",
+  "requestedCommitSha": "e82b60d5f1a94c37bd08e25a71f3c6094ab1d7e2",
+  "observedCommitSha": "e82b60d5f1a94c37bd08e25a71f3c6094ab1d7e2",
+  "deploymentId": "1f7b3c20-6d84-4a95-8e13-05c9fa62d478",
+  "deploymentStatus": "success",
+  "service": "copa-figurinhas",
+  "environment": "production",
+  "project": "copa-figurinhas",
+  "correlationStatus": "matched",
+  "usedFallbackCommand": false,
+  "cliErrorCategory": null,
+  "sourceCoverage": {
+    "railway": true,
+    "railwayBuild": true,
+    "railwayDeploy": true,
+    "railwayRuntime": true
+  },
+  "limitations": []
+}

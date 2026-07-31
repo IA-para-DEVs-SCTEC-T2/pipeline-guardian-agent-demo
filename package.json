@@ -27,7 +27,10 @@
     "docker:up": "docker compose up --build",
     "docker:down": "docker compose down",
     "deployment:smoke": "node automation/src/smoke-test.mjs",
-    "deployment:analyze": "node automation/src/analyze-deployment.mjs"
+    "deployment:analyze": "node automation/src/analyze-deployment.mjs",
+    "railway:collect": "node automation/src/collect-railway-evidence.mjs",
+    "operational:report": "node automation/src/operational-report.mjs",
+    "operational:fixture": "node automation/src/operational-report.mjs --fixture"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",

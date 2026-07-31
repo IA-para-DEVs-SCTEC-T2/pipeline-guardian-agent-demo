@@ -1,0 +1,12 @@
+[2026-07-30T15:20:49.400Z] smoke-test: alvo copa-figurinhas-production.up.railway.app
+[2026-07-30T15:20:49.403Z] smoke-test: configuração maxAttempts=30 intervalSeconds=10 requestTimeoutMs=10000
+[2026-07-30T15:20:49.405Z] smoke-test: aguardando o commit e82b60d responder
+[2026-07-30T15:20:49.407Z] tentativa 1/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 108ms
+[2026-07-30T15:20:59.527Z] tentativa 2/30 GET /api/health -> HTTP 502 — esperado 200 · corpo: Application failed to respond em 201ms
+[2026-07-30T15:21:09.527Z] tentativa 3/30 GET /api/health -> HTTP 200 ok version=1.0.0 commit=e82b60d em 174ms
+[2026-07-30T15:21:09.720Z] health check: aprovado na tentativa 3
+[2026-07-30T15:21:09.760Z] tentativa 1/30 GET /api/report -> HTTP 500 — esperado 200 · corpo: {"error":{"code":"INTERNAL_ERROR","message":"Erro interno do servidor"},"requestId":"a47f0b93-2d18-4c6e-95a1-08b7e3f2c604"} em 132ms
+[2026-07-30T15:21:19.900Z] tentativa 2/30 GET /api/report -> HTTP 500 — esperado 200 · corpo: {"error":{"code":"INTERNAL_ERROR","message":"Erro interno do servidor"},"requestId":"c60d81a5-4f37-42be-b9a8-1e05d7c3924f"} em 128ms
+[2026-07-30T15:21:30.050Z] rota funcional: reprovado após 30 tentativas — último resultado: HTTP 500 — esperado 200 · corpo: {"error":{"code":"INTERNAL_ERROR","message":"Erro interno do servidor"}}
+[2026-07-30T15:21:30.070Z] smoke-test: health=PASS funcional=FAIL
+SMOKE TEST RESULT: FAIL

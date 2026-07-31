@@ -12,10 +12,14 @@
     "deploy:assess": "node src/deploy-assessment.mjs",
     "deploy:manifest": "node src/deploy-assessment.mjs --manifest",
     "openai:smoke": "node src/openai-smoke-test.mjs",
+    "railway:collect": "node src/collect-railway-evidence.mjs",
+    "operational:report": "node src/operational-report.mjs",
+    "operational:fixture": "node src/operational-report.mjs --fixture",
     "test": "vitest run",
     "lint": "eslint ."
   },
   "devDependencies": {
+    "js-yaml": "^4.1.0",
     "vitest": "^2.1.9"
   },
   "dependencies": {

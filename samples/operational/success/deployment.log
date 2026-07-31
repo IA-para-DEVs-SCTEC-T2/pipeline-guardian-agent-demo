@@ -1,0 +1,11 @@
+[2026-07-30T13:00:47.400Z] smoke-test: alvo copa-figurinhas-production.up.railway.app
+[2026-07-30T13:00:47.403Z] smoke-test: configuração maxAttempts=30 intervalSeconds=10 requestTimeoutMs=10000
+[2026-07-30T13:00:47.405Z] smoke-test: aguardando o commit 4c1f9ab responder
+[2026-07-30T13:00:47.407Z] tentativa 1/30 GET /api/health -> erro de conexão (ECONNREFUSED) em 112ms
+[2026-07-30T13:00:57.527Z] tentativa 2/30 GET /api/health -> HTTP 502 — esperado 200 · corpo: Application failed to respond em 208ms
+[2026-07-30T13:01:07.527Z] tentativa 3/30 GET /api/health -> HTTP 200 ok version=1.0.0 commit=4c1f9ab em 187ms
+[2026-07-30T13:01:07.720Z] health check: aprovado na tentativa 3
+[2026-07-30T13:01:07.760Z] tentativa 1/30 GET /api/report -> HTTP 200 totalRegistered=12 em 143ms
+[2026-07-30T13:01:07.910Z] rota funcional: aprovado na tentativa 1
+[2026-07-30T13:01:07.930Z] smoke-test: health=PASS funcional=PASS
+SMOKE TEST RESULT: PASS
