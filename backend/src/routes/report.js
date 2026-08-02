@@ -64,7 +64,15 @@ export function createReportRouter({ log = logEvent, build = defaultBuild } = {}
 }
 
 function defaultBuild() {
-  return buildReport(listStickers());
+  const stickers = listStickers();
+
+  if (process.env.DEMO_FUNCTIONAL_FAILURE === 'true') {
+    // Falha controlada para o laboratório de CD.
+    // `stats` não existe, portanto a rota /api/report produzirá um TypeError.
+    return stickers[0].stats.quantity;
+  }
+
+  return buildReport(stickers);
 }
 
 export default createReportRouter();
