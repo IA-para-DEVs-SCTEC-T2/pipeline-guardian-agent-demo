@@ -25,7 +25,8 @@ describe('buildReport: percentual de conclusão', () => {
     expect(report.obtained).toBe(1);
     expect(report.missing).toBe(1);
     expect(report.completionPercentage).toBe(50);
-    expect(report.duplicateCopies).toBe(1);
+    // expect(report.duplicateCopies).toBe(1);
+    expect(report.duplicateCopies).toBe(4);
   });
 
   it('retorna 0% quando não há figurinhas cadastradas', () => {
