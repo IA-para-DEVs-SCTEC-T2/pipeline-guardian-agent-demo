@@ -80,7 +80,8 @@ WORKDIR /app
 COPY --from=runtime-deps /app ./
 
 COPY backend/src ./backend/src
-COPY --from=build /app/frontend/dist ./frontend/dist
+# COPY --from=build /app/frontend/dist ./frontend/dist
+COPY --from=build /app/frontend/build ./frontend/dist
 
 # `node` (uid 1000) já existe na imagem oficial. A aplicação não escreve em
 # disco, então o conteúdo copiado pode continuar pertencendo ao root: o
