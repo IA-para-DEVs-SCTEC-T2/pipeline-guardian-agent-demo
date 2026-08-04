@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 
+import { createDemoAnomalyMiddleware, resolveDemoMode } from './demo-anomaly.js';
 import { requestId } from './middleware/requestId.js';
 import { logger } from './middleware/logger.js';
 import { notFound } from './middleware/notFound.js';
@@ -42,6 +43,11 @@ export function createApp({ serveFrontend = true, frontendDist, log } = {}) {
   app.use(express.json());
   app.use(requestId);
   app.use(logger);
+  // Dia 2: sem `DEMO_ANOMALY_MODE`, é um `next()` puro — o comportamento padrão
+  // da aplicação não muda. Entra DEPOIS do logger para que o atraso injetado
+  // apareça no `durationMs` da requisição, e ANTES das rotas para que o estouro
+  // de log seja atribuído ao `requestId` correto.
+  app.use(createDemoAnomalyMiddleware({ mode: resolveDemoMode() }));
 
   app.use('/api/health', healthRouter);
   app.use('/api/version', versionRouter);

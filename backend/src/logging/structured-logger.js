@@ -52,6 +52,13 @@ export const LOG_EVENT_TYPES = [
   'health.check.completed',
   'functional.report.completed',
   'functional.report.failed',
+  // Dia 2 — laboratório de anomalias. Só é emitido com
+  // `DEMO_ANOMALY_MODE=noisy-logs` (ver `demo-anomaly.js`); sem a variável, a
+  // aplicação nunca produz esta linha. Está aqui porque a lista é fechada:
+  // `buildLogEvent` descarta o que não estiver nela, e um evento de
+  // demonstração que virasse `app.starting` silenciosamente seria pior que
+  // não existir.
+  'demo.anomaly.noisy-log',
 ];
 
 /**

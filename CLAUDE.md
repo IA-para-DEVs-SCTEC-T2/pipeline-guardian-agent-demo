@@ -224,6 +224,54 @@ relatório único — JSON, Markdown e **HTML autônomo**
   despejar o relatório inteiro. É a invariante do dia, e ela vive num arquivo
   que nenhum teste de unidade cobriria.
 
+## Laboratório de anomalias do Dia 2 (baseline → observação → regra)
+
+Onde o Dia 1 explica **falha**, o Dia 2 mede **desvio de comportamento**: a
+aplicação continua respondendo 200 e mesmo assim mudou. Ver
+`docs/day-2-simple-lab.md` e `docs/day-2-challenge.md`.
+
+- **Dois sinais decidem, e só dois.** `latencyP95Ms` e `logLinesPerRequest`, de
+  `GET /api/report`. `requestCount`, `errorCount`, `latencyMinMs` e
+  `latencyMaxMs` aparecem no relatório como contexto e não entram na decisão —
+  métrica que decide precisa de baseline própria, regra própria e explicação
+  própria, e cinco delas a mais viram um painel que ninguém sabe ler.
+- **A IA não decide.** `anomalyDetected`, `anomalyType`, `firstAnomalousSignal`
+  e `gateResult` saem de `simple-anomaly-detector.mjs`, que é puro.
+  `modelExplanationSchema` sequer expõe esses campos ao modelo, e quem monta o
+  relatório copia a detecção, não a explicação. É a invariante do Dia 1 (o
+  modelo não decide deploy) aplicada ao assunto do Dia 2.
+- **Duas condições por sinal, sempre.** Relativa (≥ 3× a baseline) **e**
+  absoluta (≥ 150 ms, ≥ 5 linhas). Só a relativa transformaria 2 ms → 7 ms em
+  incidente; só a absoluta acusaria 900 ms → 1.060 ms. Um detector barulhento é
+  desligado, e aí não existe mais detector.
+- **p95 por posto mais próximo, sem interpolação.** Com 30 amostras cai na 29ª:
+  a mais lenta é descartada, as duas mais lentas não. O valor publicado é uma
+  medição que existiu, não uma média entre duas.
+- **O modo de demonstração emite 18 linhas, não 12.** A regra de volume exige as
+  duas condições, e a baseline da rota é 2 linhas por requisição: 12 linhas a
+  cada três requisições dão +4 e **reprovam** na regra absoluta (4 < 5) — a
+  demonstração terminaria em `anomalyDetected: false`. 18 dão +6, com folga.
+  `automation/tests/simple-anomaly-detector.test.mjs` registra essa conta como
+  teste para que ninguém a "simplifique" de volta.
+- **`demo.anomaly.noisy-log` está em `LOG_EVENT_TYPES`.** A lista é fechada:
+  evento fora dela vira `app.starting` silenciosamente em `buildLogEvent`. Sem a
+  entrada, o estouro de log não existiria no formato que a medição conta.
+- **Sem `DEMO_ANOMALY_MODE`, o middleware é um `next()` puro.** Nem contador,
+  nem timer, nem log. Se ligar o Dia 2 mudasse o comportamento padrão, a
+  baseline deixaria de descrever o normal.
+- **O processo filho morre em `finally`.** `measureApplication` encerra a
+  aplicação inclusive quando a medição falha no meio — uma medição abortada não
+  pode deixar a porta 3102 ocupada para a próxima.
+- **O ambiente do processo filho é montado do zero.** Herdar `process.env`
+  traria `PORT` e `NODE_ENV` do `.env` da máquina decidindo a medição, e
+  `OPENAI_API_KEY` para um processo que não chama a OpenAI.
+- **`x-request-id` é o que torna "linhas por requisição" uma medida.** O
+  laboratório envia o seu; sem ele, o numerador da divisão seria chute, e o
+  aquecimento entraria na conta.
+- **A fixture não chama a OpenAI nem com a chave no ambiente.** `runFixture`
+  remove `OPENAI_API_KEY` antes de chamar o explicador — a chave não existe para
+  quem chamaria. Mesma decisão do `pipeline-report.mjs`.
+
 ## Comandos principais
 
 ```bash
@@ -266,6 +314,14 @@ npm run pipeline:fixture -- cd-functional-failure # health 200, /api/report 500
 PIPELINE_FIXTURE_USE_OPENAI=true npm run pipeline:fixture -- success  # opt-in do modelo
 
 RAILWAY_LIVE_TEST=true npm run railway:collect    # única coleta real do Railway
+
+npm run anomaly:baseline                          # mede o normal (porta 3102, 5 + 30 requisições)
+npm run anomaly:check                             # observa, compara, explica e gera o relatório
+npm run anomaly:check -- --baseline reports/day-2/baseline.json
+npm run anomaly:demo -- latency                   # anomalyType: latency
+npm run anomaly:demo -- noisy-logs                # anomalyType: log-volume
+npm run anomaly:fixture -- all                    # os três cenários offline
+npm run test:day2                                 # só os testes do Dia 2
 ```
 
 Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
@@ -296,6 +352,10 @@ Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
   de deployment a versionar. São **exatamente cinco**, listados em
   `DAY_1_SCENARIOS`; `functional-failure` continua funcionando como alias de
   `cd-functional-failure`.
+- Cenários offline do Dia 2: `samples/day-2-anomalies/<cenário>.json` — um
+  arquivo pequeno por cenário (`normal`, `latency`, `noisy-logs`), com
+  `baseline`, `observed` e alguns trechos de log. São `.json`, e por isso não
+  precisam de negação no `.gitignore`.
 - Logging da aplicação: `backend/src/logging/structured-logger.js`.
 
 ## Restrições

@@ -1,0 +1,40 @@
+{
+  "name": "latency",
+  "description": "Uma em cada três requisições espera ~500 ms: o p95 muda de patamar.",
+  "baseline": {
+    "sampleCount": 30,
+    "route": "/api/report",
+    "latencyP95Ms": 4,
+    "logLinesPerRequest": 2,
+    "createdAt": "2026-08-04T12:00:00.000Z",
+    "commitSha": "day-2-baseline"
+  },
+  "observed": {
+    "route": "/api/report",
+    "sampleCount": 30,
+    "latencyP95Ms": 508.4,
+    "logLinesPerRequest": 2,
+    "context": {
+      "requestCount": 30,
+      "errorCount": 0,
+      "statusCodes": { "200": 30 },
+      "logLineCount": 60,
+      "latencyMinMs": 2.2,
+      "latencyMaxMs": 511.7
+    }
+  },
+  "logExcerpts": [
+    {
+      "source": "medição:distribuição de eventType",
+      "excerpt": "60 linha(s) de log em 30 requisição(ões) medida(s): http.request.completed=30, functional.report.completed=30."
+    },
+    {
+      "source": "log:requisição mais lenta",
+      "excerpt": "{\"level\":\"info\",\"eventType\":\"http.request.completed\",\"phase\":\"functional\",\"message\":\"GET /api/report 200\",\"requestId\":\"lab-0003\",\"statusCode\":200,\"durationMs\":511.7}"
+    },
+    {
+      "source": "log:requisição mais rápida",
+      "excerpt": "{\"level\":\"info\",\"eventType\":\"http.request.completed\",\"phase\":\"functional\",\"message\":\"GET /api/report 200\",\"requestId\":\"lab-0011\",\"statusCode\":200,\"durationMs\":2.2}"
+    }
+  ]
+}

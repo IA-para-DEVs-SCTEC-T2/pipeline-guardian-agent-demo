@@ -1,0 +1,44 @@
+{
+  "name": "noisy-logs",
+  "description": "Uma em cada três requisições emite 18 linhas extras: o volume de log muda de patamar.",
+  "baseline": {
+    "sampleCount": 30,
+    "route": "/api/report",
+    "latencyP95Ms": 4,
+    "logLinesPerRequest": 2,
+    "createdAt": "2026-08-04T12:00:00.000Z",
+    "commitSha": "day-2-baseline"
+  },
+  "observed": {
+    "route": "/api/report",
+    "sampleCount": 30,
+    "latencyP95Ms": 5.1,
+    "logLinesPerRequest": 8,
+    "context": {
+      "requestCount": 30,
+      "errorCount": 0,
+      "statusCodes": { "200": 30 },
+      "logLineCount": 240,
+      "latencyMinMs": 2.4,
+      "latencyMaxMs": 12.9
+    }
+  },
+  "logExcerpts": [
+    {
+      "source": "medição:distribuição de eventType",
+      "excerpt": "240 linha(s) de log em 30 requisição(ões) medida(s): demo.anomaly.noisy-log=180, http.request.completed=30, functional.report.completed=30."
+    },
+    {
+      "source": "log:demo.anomaly.noisy-log",
+      "excerpt": "{\"level\":\"info\",\"eventType\":\"demo.anomaly.noisy-log\",\"phase\":\"runtime\",\"message\":\"linha de depuração 1/18 da requisição 3 de /api/report\",\"requestId\":\"lab-0003\",\"functionalArea\":\"report\"}"
+    },
+    {
+      "source": "log:demo.anomaly.noisy-log",
+      "excerpt": "{\"level\":\"info\",\"eventType\":\"demo.anomaly.noisy-log\",\"phase\":\"runtime\",\"message\":\"linha de depuração 18/18 da requisição 3 de /api/report\",\"requestId\":\"lab-0003\",\"functionalArea\":\"report\"}"
+    },
+    {
+      "source": "log:requisição mais lenta",
+      "excerpt": "{\"level\":\"info\",\"eventType\":\"http.request.completed\",\"phase\":\"functional\",\"message\":\"GET /api/report 200\",\"requestId\":\"lab-0003\",\"statusCode\":200,\"durationMs\":12.9}"
+    }
+  ]
+}
