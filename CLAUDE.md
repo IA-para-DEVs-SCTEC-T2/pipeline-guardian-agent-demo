@@ -224,6 +224,61 @@ relatório único — JSON, Markdown e **HTML autônomo**
   despejar o relatório inteiro. É a invariante do dia, e ela vive num arquivo
   que nenhum teste de unidade cobriria.
 
+## Laboratório preditivo do Dia 3 (`automation/src/day3/`)
+
+Regressão logística didática em JavaScript puro que prevê falha nas **próximas
+duas janelas** a partir de métricas sintéticas, e uma IA generativa que apenas
+**explica** o que ela calculou. Ver `docs/day-3-implementation-notes.md`.
+
+- **O modelo calcula; a IA escreve.** `failureProbability`, `predictedFailure`,
+  `threshold` e `topFactors` saem da regressão. `summary`, `evidence`,
+  `interpretation`, `recommendedActions` e `limitations` saem do modelo de
+  linguagem. A garantia não é o prompt: `modelPredictionExplanationSchema` não
+  declara os campos numéricos, então o structured output não tem como
+  devolvê-los. Mesmo padrão do Dia 1, onde o modelo não vê `deployDecision`.
+- **Nenhuma feature olha o futuro; só o rótulo olha.** Toda função de
+  `features.mjs` recebe a sequência e um índice, e lê `windows[0..index]`.
+  `labelWindow` olha exatamente duas janelas à frente — nem uma a mais.
+- **Horizonte incompleto é `null`, não `0`.** Chamar de "não vai falhar" uma
+  janela sem duas janelas à frente é inventar um negativo a partir da ausência
+  de dado, e ensina ao modelo que toda sequência termina bem.
+- **Janela já em falha não é exemplo de treino.** Prever o que já aconteceu não
+  é previsão — e os valores extremos dessas janelas inflavam o desvio padrão a
+  ponto de o modelo só acender *depois* da falha.
+- **A divisão treino/teste separa sequências inteiras**, estratificadas por
+  padrão (7 de 10 por padrão para treino). Janelas vizinhas compartilham quase
+  todo o passado: sortear janelas colocaria parte do passado do teste dentro do
+  treino, e a métrica mediria memória, não previsão. Média, desvio e limiar
+  saem só do treino; `threshold = 0.70` é constante declarada.
+- **`L2_LAMBDA = 0.02` é decisão de legibilidade, não de desempenho.**
+  `currentLatencyRatio` e `latencySlope3` são quase colineares numa rampa
+  geométrica; com regularização menor o ajuste dava peso **negativo** ao nível
+  de latência. A previsão continuava certa e a tabela de pesos passava a dizer
+  que latência alta reduz o risco. Num laboratório cujo produto é a explicação,
+  isso é pior que um ponto de F1.
+- **Os quatro padrões negativos não são enfeite.** Sem `transient-spike` no
+  treino o modelo aprende "métrica alta = falha" e reprova todo pico passageiro;
+  sem `plateau-below-threshold` ele aprende que persistência sozinha basta. São
+  os dois falsos positivos que a aula existe para discutir.
+- **O desafio não esconde o desfecho: ele não o calcula.** Sem `--reveal`, a
+  sequência é cortada no ponto de decisão e `outcome` vem todo `null`. Não é
+  filtro no renderizador — não há de onde vazar. O payload enviado ao modelo
+  também não leva `id`, título nem padrão: num desafio, o nome do caso é a
+  resposta.
+- **A mitigação recalcula, não ajusta.** `--mitigated` decai as métricas a
+  partir da janela de intervenção, refaz as features do zero e consulta o modelo
+  de novo. O relatório vai para `mitigated/` e o original fica intacto.
+- **Exit code fala de execução, não de risco.** Probabilidade de 98% é execução
+  bem-sucedida. Só erro de uso (`2`) e falha interna (`1`) saem diferentes de
+  zero — do contrário todo cenário de falha "quebraria o build".
+- **Sem `OPENAI_API_KEY` o laboratório roda inteiro**, com o fallback
+  determinístico e `explanation.origin` declarado em todo formato. `npm test` e
+  `npm run ci` nunca tocam a rede: os testes injetam cliente falso.
+- **Sem biblioteca de gráficos.** Os painéis são SVG inline escrito à mão, com
+  `<title>`/`<desc>`, marcador de **forma** por faixa de risco (●/▲/■) e tudo
+  passando por `escapeHtml`. Um relatório impresso em preto e branco continua
+  legível.
+
 ## Comandos principais
 
 ```bash
@@ -266,6 +321,13 @@ npm run pipeline:fixture -- cd-functional-failure # health 200, /api/report 500
 PIPELINE_FIXTURE_USE_OPENAI=true npm run pipeline:fixture -- success  # opt-in do modelo
 
 RAILWAY_LIVE_TEST=true npm run railway:collect    # única coleta real do Railway
+
+npm run day3:prepare                              # treina, avalia e grava o modelo preditivo
+npm run day3:scenario -- all                      # os quatro cenários visuais do Dia 3
+npm run day3:challenge -- case-a                  # desafio, sem revelar o desfecho
+npm run day3:challenge:reveal -- case-a           # desfecho, antecedência e TP/FP/TN/FN
+npm run day3:challenge -- case-a --mitigated      # simulação de intervenção, em relatório à parte
+npm run test:day3                                 # apenas os testes do Dia 3
 ```
 
 Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
@@ -297,6 +359,10 @@ Por workspace: `npm run <script> -w backend`, `-w frontend` ou `-w automation`.
   `DAY_1_SCENARIOS`; `functional-failure` continua funcionando como alias de
   `cd-functional-failure`.
 - Logging da aplicação: `backend/src/logging/structured-logger.js`.
+- Laboratório preditivo: `automation/src/day3/*.mjs` (mesmo `kebab-case.mjs`),
+  testes em `automation/tests/day-3-*.test.mjs` e definições dos cenários e dos
+  casos em `samples/day-3/*.json`. As saídas ficam em `reports/day-3/`, que é
+  ignorado pelo Git e reconstruído por `npm run day3:prepare`.
 
 ## Restrições
 

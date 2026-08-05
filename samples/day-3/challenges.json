@@ -1,0 +1,56 @@
+{
+  "$comment": "Dia 3 — os três casos de desafio. Os títulos e as descrições são NEUTROS de propósito: quem executa `npm run day3:challenge -- case-a` não deve descobrir o desfecho pela tela. O desfecho só sai com `day3:challenge:reveal`. Este arquivo é o gabarito e obviamente entrega o final para quem o abrir — ele existe para quem prepara a aula, não para quem a assiste.",
+  "challenges": [
+    {
+      "id": "case-a",
+      "title": "Caso A",
+      "description": "Sequência de seis janelas observadas em um serviço do laboratório. Decida se há falha no horizonte de duas janelas.",
+      "decisionIndex": 5,
+      "interventionIndex": 5,
+      "windows": [
+        { "index": 0, "latencyP95Ms": 13, "errorRate": 0.01, "logLinesPerRequest": 2.1, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 40, "errorRate": 0.03, "logLinesPerRequest": 2.6, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 120, "errorRate": 0.07, "logLinesPerRequest": 3.4, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 310, "errorRate": 0.14, "logLinesPerRequest": 4.5, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 620, "errorRate": 0.26, "logLinesPerRequest": 6.0, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 980, "errorRate": 0.38, "logLinesPerRequest": 7.8, "healthFailure": false },
+        { "index": 6, "latencyP95Ms": 1240, "errorRate": 0.49, "logLinesPerRequest": 9.4, "healthFailure": false },
+        { "index": 7, "latencyP95Ms": 1460, "errorRate": 0.58, "logLinesPerRequest": 11.0, "healthFailure": false }
+      ]
+    },
+    {
+      "id": "case-b",
+      "title": "Caso B",
+      "description": "Sequência de seis janelas observadas em um serviço do laboratório. Decida se há falha no horizonte de duas janelas.",
+      "decisionIndex": 5,
+      "interventionIndex": 5,
+      "windows": [
+        { "index": 0, "latencyP95Ms": 12, "errorRate": 0.0, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 14, "errorRate": 0.01, "logLinesPerRequest": 3.2, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 18, "errorRate": 0.01, "logLinesPerRequest": 5.5, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 26, "errorRate": 0.02, "logLinesPerRequest": 9.0, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 48, "errorRate": 0.04, "logLinesPerRequest": 15.0, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 210, "errorRate": 0.09, "logLinesPerRequest": 23.0, "healthFailure": false },
+        { "index": 6, "latencyP95Ms": 700, "errorRate": 0.17, "logLinesPerRequest": 30.0, "healthFailure": false },
+        { "index": 7, "latencyP95Ms": 1750, "errorRate": 0.28, "logLinesPerRequest": 36.0, "healthFailure": false }
+      ]
+    },
+    {
+      "id": "case-c",
+      "title": "Caso C",
+      "description": "Sequência de cinco janelas observadas em um serviço do laboratório. Decida se há falha no horizonte de duas janelas.",
+      "decisionIndex": 4,
+      "interventionIndex": 4,
+      "windows": [
+        { "index": 0, "latencyP95Ms": 11, "errorRate": 0.01, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 13, "errorRate": 0.0, "logLinesPerRequest": 2.1, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 1180, "errorRate": 0.09, "logLinesPerRequest": 3.8, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 240, "errorRate": 0.03, "logLinesPerRequest": 2.6, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 45, "errorRate": 0.01, "logLinesPerRequest": 2.1, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 16, "errorRate": 0.01, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 6, "latencyP95Ms": 13, "errorRate": 0.0, "logLinesPerRequest": 1.9, "healthFailure": false },
+        { "index": 7, "latencyP95Ms": 12, "errorRate": 0.01, "logLinesPerRequest": 2.0, "healthFailure": false }
+      ]
+    }
+  ]
+}

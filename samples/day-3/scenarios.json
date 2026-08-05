@@ -1,0 +1,57 @@
+{
+  "$comment": "Dia 3 — os quatro cenários visuais da aula. Dados controlados, sem aplicação real: o objetivo é analisar a sequência, não gerar carga. Editar aqui muda a demonstração sem tocar em código.",
+  "scenarios": [
+    {
+      "id": "latency-growth",
+      "title": "Sequência A — latência em crescimento",
+      "description": "A latência p95 cresce janela após janela enquanto erros e logs permanecem próximos da baseline.",
+      "windows": [
+        { "index": 0, "latencyP95Ms": 12, "errorRate": 0.0, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 90, "errorRate": 0.01, "logLinesPerRequest": 2.1, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 240, "errorRate": 0.02, "logLinesPerRequest": 2.3, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 520, "errorRate": 0.03, "logLinesPerRequest": 2.4, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 900, "errorRate": 0.05, "logLinesPerRequest": 2.6, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 1700, "errorRate": 0.08, "logLinesPerRequest": 2.8, "healthFailure": false }
+      ]
+    },
+    {
+      "id": "error-growth",
+      "title": "Sequência B — taxa de erro em crescimento",
+      "description": "A taxa de erro sobe de forma acelerada; a latência acompanha de longe e os logs quase não se mexem.",
+      "windows": [
+        { "index": 0, "latencyP95Ms": 14, "errorRate": 0.0, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 26, "errorRate": 0.03, "logLinesPerRequest": 2.2, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 55, "errorRate": 0.08, "logLinesPerRequest": 2.5, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 140, "errorRate": 0.18, "logLinesPerRequest": 2.8, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 300, "errorRate": 0.35, "logLinesPerRequest": 3.2, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 520, "errorRate": 0.6, "logLinesPerRequest": 3.6, "healthFailure": false }
+      ]
+    },
+    {
+      "id": "log-growth",
+      "title": "Sequência C — volume de logs em crescimento",
+      "description": "O volume de logs por requisição dispara primeiro; a latência só reage nas janelas finais. Correlação observada, não causa confirmada.",
+      "windows": [
+        { "index": 0, "latencyP95Ms": 12, "errorRate": 0.0, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 14, "errorRate": 0.01, "logLinesPerRequest": 3.0, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 20, "errorRate": 0.02, "logLinesPerRequest": 6.0, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 60, "errorRate": 0.04, "logLinesPerRequest": 11.0, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 420, "errorRate": 0.09, "logLinesPerRequest": 20.0, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 1600, "errorRate": 0.16, "logLinesPerRequest": 32.0, "healthFailure": false }
+      ]
+    },
+    {
+      "id": "transient-spike",
+      "title": "Sequência D — pico transitório com recuperação",
+      "description": "Uma única janela ruim, seguida de recuperação. Nenhuma falha no horizonte: é o cenário que separa alarme de previsão.",
+      "windows": [
+        { "index": 0, "latencyP95Ms": 10, "errorRate": 0.01, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 1, "latencyP95Ms": 12, "errorRate": 0.01, "logLinesPerRequest": 2.1, "healthFailure": false },
+        { "index": 2, "latencyP95Ms": 500, "errorRate": 0.02, "logLinesPerRequest": 2.4, "healthFailure": false },
+        { "index": 3, "latencyP95Ms": 80, "errorRate": 0.01, "logLinesPerRequest": 2.2, "healthFailure": false },
+        { "index": 4, "latencyP95Ms": 15, "errorRate": 0.0, "logLinesPerRequest": 2.0, "healthFailure": false },
+        { "index": 5, "latencyP95Ms": 11, "errorRate": 0.01, "logLinesPerRequest": 1.9, "healthFailure": false }
+      ]
+    }
+  ]
+}

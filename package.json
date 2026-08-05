@@ -17,6 +17,7 @@
     "test:backend": "npm run test -w backend",
     "test:frontend": "npm run test -w frontend",
     "test:automation": "npm run test -w automation",
+    "test:day3": "npm run test:day3 -w automation",
     "build": "npm run build -w frontend",
     "start:production": "npm run build && NODE_ENV=production npm run start -w backend",
     "ci": "npm run lint && npm run test && npm run build",
@@ -32,7 +33,11 @@
     "operational:report": "node automation/src/operational-report.mjs",
     "operational:fixture": "node automation/src/operational-report.mjs --fixture",
     "pipeline:report": "node automation/src/pipeline-report.mjs",
-    "pipeline:fixture": "node automation/src/pipeline-report.mjs --fixture"
+    "pipeline:fixture": "node automation/src/pipeline-report.mjs --fixture",
+    "day3:prepare": "node automation/src/day3/run.mjs prepare",
+    "day3:scenario": "node automation/src/day3/run.mjs scenario",
+    "day3:challenge": "node automation/src/day3/run.mjs challenge",
+    "day3:challenge:reveal": "node automation/src/day3/run.mjs challenge --reveal"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
