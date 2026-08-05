@@ -58,6 +58,7 @@ export const LOG_EVENT_TYPES = [
   // `demo.` diz, no próprio nome, que a causa é o laboratório e não a aplicação.
   'demo.anomaly.latency',
   'demo.anomaly.error-rate',
+  'demo.anomaly.noisy-log',
 ];
 
 /**

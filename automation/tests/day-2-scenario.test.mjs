@@ -171,6 +171,78 @@ function errorRateObservation() {
   };
 }
 
+/** Eventos a mais por ativação, como em `backend/src/demo-anomalies.js`. */
+const NOISY_EXTRA_EVENTS = 18;
+
+/**
+ * Trinta amostras com o efeito que o modo `noisy-logs` produz: uma requisição em
+ * cada três emite um bloco de 18 eventos `demo.anomaly.noisy-log` a mais, **sem**
+ * demorar mais, **sem** falhar e **sem** mudar o corpo.
+ *
+ * Os números do fixture são os do backend, e a conta que eles produzem é a razão
+ * de o bloco ter 18 eventos e não 10: com 2 linhas de baseline, `2 + 18/3 = 8`
+ * passa nas duas condições da regra `log_volume` (`≥ 6` e `Δ ≥ 5`), enquanto
+ * `2 + 10/3 = 5,33` não passa em nenhuma — e o cenário publicaria um pico
+ * visível que não vira anomalia.
+ */
+function noisyLogsObservation() {
+  const samples = Array.from({ length: 30 }, (_, index) => {
+    const sequence = index + 1;
+    const noisy = sequence % 3 === 0;
+
+    return {
+      sequence,
+      statusCode: 200,
+      durationMs: FAST_MS,
+      responseSizeBytes: 1968,
+      // As duas linhas de sempre (`functional.report.completed` e
+      // `http.request.completed`) mais o bloco, quando ele existe.
+      logLineCount: noisy ? 2 + NOISY_EXTRA_EVENTS : 2,
+      requestId: `day2-${sequence}-uuid`,
+    };
+  });
+
+  return {
+    samples,
+    summary: summarizeSamples(samples),
+    logEvents: samples.flatMap((sample) => [
+      {
+        schemaVersion: 1,
+        time: '2026-08-05T10:00:00.000Z',
+        level: 'info',
+        eventType: 'functional.report.completed',
+        phase: 'functional',
+        message: 'relatório do álbum gerado',
+        requestId: sample.requestId,
+        statusCode: 200,
+      },
+      ...(sample.sequence % 3 === 0
+        ? Array.from({ length: NOISY_EXTRA_EVENTS }, (_, index) => ({
+            schemaVersion: 1,
+            time: '2026-08-05T10:00:00.001Z',
+            // `info`, não `error`: a anomalia é quantidade de log, não gravidade.
+            level: 'info',
+            eventType: 'demo.anomaly.noisy-log',
+            phase: 'functional',
+            message:
+              `anomalia de volume de log do laboratório na requisição ${sample.sequence}: ` +
+              `evento ${index + 1}/${NOISY_EXTRA_EVENTS} do bloco`,
+            requestId: sample.requestId,
+            statusCode: 200,
+          }))
+        : []),
+    ]),
+    logCorrelation: 'request_id',
+    noiseLines: [],
+    warmupRequests: 5,
+    startedAt: '2026-08-05T10:00:00.000Z',
+    finishedAt: '2026-08-05T10:00:20.000Z',
+    port: 3102,
+    path: '/api/report',
+    limitations: [],
+  };
+}
+
 const dirs = [];
 function tempDir() {
   const dir = mkdtempSync(join(tmpdir(), 'day2-scenario-'));
@@ -211,9 +283,10 @@ async function run({ mode = 'latency', observation = latencyObservation(), outDi
 
 describe('resolveScenario', () => {
   it('conhece os cenários que o backend sabe provocar', () => {
-    expect(SCENARIO_MODES).toEqual(['latency', 'error-rate']);
+    expect(SCENARIO_MODES).toEqual(['latency', 'error-rate', 'noisy-logs']);
     expect(SCENARIOS.latency.expectedSignal).toBe('latencyP95Ms');
     expect(SCENARIOS['error-rate'].expectedSignal).toBe('errorRate');
+    expect(SCENARIOS['noisy-logs'].expectedSignal).toBe('logLinesPerRequest');
   });
 
   it('mantém o modo do laboratório separado do tipo publicado pelo detector', () => {
@@ -222,18 +295,29 @@ describe('resolveScenario', () => {
     // regra de detector para ficar parecido consigo mesmo.
     expect(SCENARIOS['error-rate'].envValue).toBe('error-rate');
     expect(SCENARIOS['error-rate'].expectedAnomalyType).toBe('error_rate');
+
+    // Mesma separação no cenário de log: `noisy-logs` é o modo (plural),
+    // `log_volume` é o tipo publicado pelo detector e `demo.anomaly.noisy-log`
+    // é o evento emitido (singular). Três nomes, três vocabulários.
+    expect(SCENARIOS['noisy-logs'].envValue).toBe('noisy-logs');
+    expect(SCENARIOS['noisy-logs'].expectedAnomalyType).toBe('log_volume');
   });
 
   it('aceita o modo com espaço e caixa diferentes', () => {
     expect(resolveScenario(' Latency ').mode).toBe('latency');
     expect(resolveScenario(' Error-Rate ').mode).toBe('error-rate');
+    expect(resolveScenario(' Noisy-Logs ').mode).toBe('noisy-logs');
   });
 
   it('recusa um modo desconhecido dizendo o que existe', () => {
-    expect(() => resolveScenario('payload')).toThrow(/desconhecido.*latency, error-rate/s);
+    expect(() => resolveScenario('payload')).toThrow(
+      /desconhecido.*latency, error-rate, noisy-logs/s,
+    );
     expect(() => resolveScenario('')).toThrow(/day2:scenario -- latency/);
     // O sublinhado do detector não é um modo do laboratório.
     expect(() => resolveScenario('error_rate')).toThrow(/desconhecido/);
+    // O nome do evento também não: ele é singular, o modo é plural.
+    expect(() => resolveScenario('noisy-log')).toThrow(/desconhecido/);
   });
 });
 
@@ -382,6 +466,80 @@ describe('runScenario: erro intermitente', () => {
     const html = readFileSync(paths.htmlPath, 'utf8');
     expect(html).toContain('<!doctype html>');
     expect(html).toContain('Taxa de erro');
+
+    // Sem chave no ambiente, a explicação é a determinística — nenhuma chamada
+    // de rede acontece nos testes.
+    expect(written.usedFallback).toBe(true);
+    expect(written.explanation.summary.length).toBeGreaterThan(0);
+  });
+});
+
+describe('runScenario: excesso de logs', () => {
+  const runNoisy = (extra = {}) =>
+    run({ mode: 'noisy-logs', observation: noisyLogsObservation(), ...extra });
+
+  it('entrega `DEMO_ANOMALY_MODE=noisy-logs` ao backend observado', async () => {
+    const { calls } = await runNoisy();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].env).toEqual({ [DEMO_ANOMALY_ENV_VAR]: 'noisy-logs' });
+  });
+
+  it('detecta a anomalia com `logLinesPerRequest` como primeiro sinal', async () => {
+    const { detection, reproduced } = await runNoisy();
+
+    expect(detection.anomalyDetected).toBe(true);
+    expect(detection.gateResult).toBe('anomaly');
+    expect(detection.firstAnomalousSignal).toBe('logLinesPerRequest');
+    expect(detection.anomalyTypes).toContain('log_volume');
+    expect(reproduced).toBe(true);
+  });
+
+  it('move `logLinesPerRequest` de 2 para 8, e só ele', async () => {
+    const { report } = await runNoisy();
+
+    // Dez blocos de 18 eventos em trinta requisições: `(30 × 2 + 10 × 18) / 30`.
+    // É esta conta que faz o bloco ter 18 eventos — com 10 o observado seria
+    // 5,33 e reprovaria nas duas condições da regra.
+    expect(report.observed.logLinesPerRequest).toBe(8);
+    expect(report.baseline.logLinesPerRequest).toBe(2);
+
+    const logVolume = detectionOf(report, 'logLinesPerRequest');
+    expect(logVolume.triggered).toBe(true);
+    expect(logVolume.conditions.every((condition) => condition.met)).toBe(true);
+
+    // O bloco não espera, não falha e não engorda o corpo: os outros três
+    // sinais ficam exatamente onde estavam.
+    expect(report.observed.latencyP95Ms).toBe(FAST_MS);
+    expect(report.observed.errorRate).toBe(0);
+    expect(report.observed.responseSizeP95Bytes).toBe(1968);
+
+    for (const signal of ['latencyP95Ms', 'errorRate', 'responseSizeP95Bytes']) {
+      expect(detectionOf(report, signal).triggered).toBe(false);
+    }
+  });
+
+  it('todas as trinta requisições continuam em 200', async () => {
+    const { report } = await runNoisy();
+
+    expect(report.samples).toHaveLength(30);
+    expect(report.samples.every((sample) => sample.statusCode === 200)).toBe(true);
+    expect(report.observed.errorRate).toBe(0);
+  });
+
+  it('publica o painel com o sinal de volume de log como primeiro', async () => {
+    const { paths, outDir } = await runNoisy();
+
+    expect(paths.jsonPath).toBe(join(outDir, 'anomaly-report.json'));
+
+    const written = JSON.parse(readFileSync(paths.jsonPath, 'utf8'));
+    expect(written.detection.firstAnomalousSignal).toBe('logLinesPerRequest');
+    expect(written.detection.anomalyTypes).toContain('log_volume');
+    expect(written.scope).toBe('day-2-anomaly-lab');
+
+    const html = readFileSync(paths.htmlPath, 'utf8');
+    expect(html).toContain('<!doctype html>');
+    expect(html).toContain('Linhas de log por requisição');
 
     // Sem chave no ambiente, a explicação é a determinística — nenhuma chamada
     // de rede acontece nos testes.

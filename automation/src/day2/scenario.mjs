@@ -74,6 +74,19 @@ export const SCENARIOS = {
     expectedSignal: 'errorRate',
     expectedAnomalyType: 'error_rate',
   },
+  // O modo é `noisy-logs` (plural, é o cenário) e o evento emitido é
+  // `demo.anomaly.noisy-log` (singular, é uma linha do bloco). A diferença é
+  // proposital, e a mesma da nota acima: cada nome pertence ao seu vocabulário.
+  'noisy-logs': {
+    mode: 'noisy-logs',
+    envValue: 'noisy-logs',
+    label: 'excesso de logs',
+    summary:
+      'a cada terceira requisição, 18 eventos `demo.anomaly.noisy-log` a mais — no mesmo 200, ' +
+      'no mesmo tempo e com o mesmo corpo (2 → 8 linhas por requisição)',
+    expectedSignal: 'logLinesPerRequest',
+    expectedAnomalyType: 'log_volume',
+  },
 };
 
 export const SCENARIO_MODES = Object.keys(SCENARIOS);

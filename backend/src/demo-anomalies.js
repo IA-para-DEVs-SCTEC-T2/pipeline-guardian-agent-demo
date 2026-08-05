@@ -32,6 +32,9 @@
  *      requisição que falha (a do cenário e a do `requestLogger`) são as mesmas
  *      duas de uma que dá certo, de propósito: `logLinesPerRequest` não pode
  *      subir junto.
+ *    - `noisy-logs`: o mesmo 200, com o mesmo corpo e no mesmo tempo — só que
+ *      acompanhado de um bloco de eventos estruturados a mais. A anomalia está
+ *      em `logLinesPerRequest`, e nem o relógio nem o status são tocados.
  * 5. **A falha do cenário não muda o veredito da requisição.** Se a espera ou o
  *    log falharem, o `latency` segue para o handler e o `error-rate` continua
  *    devolvendo o seu 500. O log é um efeito colateral do cenário, nunca a
@@ -51,8 +54,11 @@ export const LATENCY_MODE = 'latency';
 /** Cenário de erro intermitente. */
 export const ERROR_RATE_MODE = 'error-rate';
 
+/** Cenário de excesso de logs. */
+export const NOISY_LOGS_MODE = 'noisy-logs';
+
 /** Os modos implementados, na ordem em que foram adicionados ao laboratório. */
-export const DEMO_ANOMALY_MODES = [LATENCY_MODE, ERROR_RATE_MODE];
+export const DEMO_ANOMALY_MODES = [LATENCY_MODE, ERROR_RATE_MODE, NOISY_LOGS_MODE];
 
 /**
  * Espera injetada, em milissegundos.
@@ -104,6 +110,51 @@ export const ERROR_RATE_MESSAGE =
   'anomalia do laboratório do Dia 2: falha controlada em GET /api/report';
 
 /**
+ * Uma requisição em cada três, como no cenário de latência.
+ *
+ * A anomalia é intermitente de propósito: um serviço que despeja log em toda
+ * requisição é ruído constante, e ruído constante entraria na baseline da
+ * própria máquina em vez de aparecer como desvio dela.
+ */
+export const NOISY_LOGS_EVERY = 3;
+
+/**
+ * Eventos a mais por ativação. **Dezoito**, e o número sai de uma conta.
+ *
+ * A baseline saudável é `logLinesPerRequest: 2` (o `functional.report.completed`
+ * da rota e o `http.request.completed` do `requestLogger`). A regra `log_volume`
+ * do detector exige as duas condições de sempre — `observado ≥ baseline × 3`
+ * **e** `observado − baseline ≥ 5` —, o que coloca o piso de disparo em **7**
+ * linhas por requisição.
+ *
+ * Com um bloco a cada três requisições, o observado é `2 + bloco / 3`:
+ *
+ *   - 10 eventos → 5,33 linhas/req. Reprova nas duas condições, e o painel
+ *     mostraria um pico visível que **não** vira anomalia. É um cenário
+ *     legítimo de aula, mas não é este.
+ *   - 18 eventos → 8,00 linhas/req. Passa em `≥ 6` (relativa) e em `Δ ≥ 5`
+ *     (absoluta) com uma linha de margem — sobra para o caso de o coletor
+ *     perder uma linha na janela medida.
+ *
+ * O número está aqui, sozinho, porque é ele que precisa ser recalculado se
+ * algum dia a baseline da aplicação deixar de ser 2 linhas por requisição. O
+ * detector não se ajusta ao cenário: é o cenário que se ajusta à regra.
+ */
+export const NOISY_LOGS_EXTRA_EVENTS = 18;
+
+/**
+ * Nível dos eventos extras: `info`, não `error`.
+ *
+ * Dois motivos, e nenhum é estético. O primeiro é de contrato: `error` vai para
+ * `stderr` e é o sinal que a seleção de fatos do diagnóstico operacional trata
+ * como evidência (`level` vence regex). Dezoito erros falsos por ativação
+ * ensinariam o agente a ver incidente onde o laboratório provocou volume. O
+ * segundo é do próprio cenário: a anomalia é **quantidade** de log, não
+ * gravidade — se ela também mudasse a gravidade, moveria dois sinais.
+ */
+export const NOISY_LOGS_LEVEL = 'info';
+
+/**
  * O modo pedido no ambiente, normalizado.
  *
  * @param {NodeJS.ProcessEnv} [env]
@@ -127,6 +178,14 @@ export function latencyModeEnabled(env = process.env) {
  */
 export function errorRateModeEnabled(env = process.env) {
   return readAnomalyMode(env) === ERROR_RATE_MODE;
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {boolean}
+ */
+export function noisyLogsModeEnabled(env = process.env) {
+  return readAnomalyMode(env) === NOISY_LOGS_MODE;
 }
 
 /**
@@ -278,6 +337,96 @@ export function createErrorRateAnomaly({
 }
 
 /**
+ * Middleware que emite um bloco de eventos estruturados a mais em uma
+ * requisição em cada `every`, sem mudar mais nada.
+ *
+ * Quatro coisas que este middleware **não** faz, e cada ausência é uma decisão:
+ *
+ * - **Não espera.** Nenhum `sleep`, nenhum timer, nenhuma promessa: os
+ *   `emit` são síncronos e o `next()` acontece na mesma volta do event loop.
+ *   Um bloco de log que também demorasse moveria `latencyP95Ms` junto, e o
+ *   `firstAnomalousSignal` deixaria de ser `logLinesPerRequest`.
+ * - **Não muda o status nem o corpo.** A requisição ativada segue para o
+ *   handler e devolve o mesmo 200 com o mesmo relatório. `errorRate` e
+ *   `responseSizeP95Bytes` ficam onde estavam.
+ * - **Não repete indefinidamente.** O laço é um `for` de tamanho fixo, com
+ *   limite conhecido em tempo de compilação (`NOISY_LOGS_EXTRA_EVENTS`). Ele
+ *   não olha o relógio, não se reagenda e não depende do que aconteceu na
+ *   requisição anterior: são exatamente `extraEvents` eventos por ativação, ou
+ *   nenhum.
+ * - **Não usa `level: 'error'`.** Ver `NOISY_LOGS_LEVEL`.
+ *
+ * O `try` fica **dentro** do laço, e não em volta dele, por causa da palavra
+ * "exatamente": com o `try` do lado de fora, um coletor que falhasse no quinto
+ * evento cortaria os treze seguintes e a proporção observada deixaria de ser a
+ * proporção implementada — silenciosamente, que é o pior jeito.
+ *
+ * O contador é do middleware, e não do processo, pelo mesmo motivo dos outros
+ * dois cenários: cada roteador criado tem o seu.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {object} [options.log] emissor de log estruturado
+ * @param {number} [options.every]
+ * @param {number} [options.extraEvents]
+ * @returns {import('express').RequestHandler}
+ */
+export function createNoisyLogsAnomaly({
+  env = process.env,
+  log = logEvent,
+  every = NOISY_LOGS_EVERY,
+  extraEvents = NOISY_LOGS_EXTRA_EVENTS,
+} = {}) {
+  let requestCount = 0;
+
+  return function demoNoisyLogsAnomaly(req, res, next) {
+    // Ver decisão 1: a saída antecipada vem antes do contador.
+    if (!noisyLogsModeEnabled(env)) {
+      next();
+      return;
+    }
+
+    requestCount += 1;
+    if (requestCount % every !== 0) {
+      next();
+      return;
+    }
+
+    const sequence = requestCount;
+
+    for (let index = 1; index <= extraEvents; index += 1) {
+      try {
+        log.emit({
+          level: NOISY_LOGS_LEVEL,
+          eventType: 'demo.anomaly.noisy-log',
+          phase: 'functional',
+          // A posição dentro do bloco entra na mensagem porque é ela que torna a
+          // regra conferível no log: quem contar as linhas de um `requestId`
+          // encontra `1/18` até `18/18`, e mais nada.
+          message:
+            `anomalia de volume de log do laboratório na requisição ${sequence}: ` +
+            `evento ${index}/${extraEvents} do bloco`,
+          fields: {
+            // Sem o `requestId`, a observação do Dia 2 não consegue correlacionar
+            // a linha com a requisição e cai na média por janela — o número final
+            // seria o mesmo, mas declarado como aproximação em vez de contagem.
+            requestId: req.id,
+            path: req.originalUrl,
+            statusCode: 200,
+            functionalArea: 'report',
+          },
+        });
+      } catch {
+        // Ver decisão 5. Um log que falhou não muda o veredito da requisição —
+        // e não interrompe os eventos seguintes do mesmo bloco.
+      }
+    }
+
+    next();
+  };
+}
+
+/**
  * Compõe os cenários disponíveis num único middleware.
  *
  * O encadeamento é seguro porque cada middleware sai antes do contador quando o
@@ -294,6 +443,7 @@ export function createDemoAnomaly({ env = process.env, log = logEvent, sleep = d
   const scenarios = [
     createLatencyAnomaly({ env, log, sleep }),
     createErrorRateAnomaly({ env, log }),
+    createNoisyLogsAnomaly({ env, log }),
   ];
 
   return function demoAnomaly(req, res, next) {
