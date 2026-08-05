@@ -1,6 +1,6 @@
 import { Router } from 'express';
 
-import { createLatencyAnomaly } from '../demo-anomalies.js';
+import { createDemoAnomaly } from '../demo-anomalies.js';
 import { describeError, logEvent } from '../logging/structured-logger.js';
 import { buildReport } from '../services/report.js';
 import { listStickers } from '../store/store.js';
@@ -22,8 +22,15 @@ import { listStickers } from '../store/store.js';
  *
  * O laboratório do Dia 2 entra aqui, e só aqui: `demoAnomaly` é o middleware de
  * `demo-anomalies.js`, inerte enquanto `DEMO_ANOMALY_MODE` não pedir um cenário.
- * Ele fica **antes** do handler porque a anomalia é atraso na resposta, não
- * mudança no relatório — o corpo devolvido é o mesmo com ou sem cenário ligado.
+ * Ele fica **antes** do handler porque nenhum cenário mexe no relatório: o
+ * `latency` atrasa a resposta e o `error-rate` a substitui por um 500 do
+ * `errorHandler`. Na requisição que passa — e são a maioria em qualquer cenário
+ * — o corpo devolvido é o mesmo com ou sem o laboratório ligado.
+ *
+ * A requisição reprovada pelo `error-rate` não emite `functional.report.failed`:
+ * o handler nem chega a rodar, e registrar "falha ao gerar o relatório" quando o
+ * relatório não foi gerado seria o laboratório mentindo sobre o próprio efeito.
+ * O evento que existe é `demo.anomaly.error-rate`, com o nome da causa.
  *
  * @param {object} [options]
  * @param {object} [options.log] emissor injetável (testes)
@@ -35,7 +42,7 @@ import { listStickers } from '../store/store.js';
 export function createReportRouter({
   log = logEvent,
   build = defaultBuild,
-  demoAnomaly = createLatencyAnomaly({ log }),
+  demoAnomaly = createDemoAnomaly({ log }),
 } = {}) {
   const router = Router();
 

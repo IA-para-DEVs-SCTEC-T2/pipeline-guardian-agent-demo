@@ -1,9 +1,9 @@
 /**
- * O cenário provocado do Dia 2 — `npm run day2:scenario -- latency`.
+ * Os cenários provocados do Dia 2 — `npm run day2:scenario -- <modo>`.
  *
  * O `day2:check` observa a aplicação **como ela está**. Este comando observa a
  * aplicação **como ele pediu que ela ficasse**: sobe o backend com
- * `DEMO_ANOMALY_MODE=latency`, mede as mesmas trinta requisições, compara com a
+ * `DEMO_ANOMALY_MODE=<modo>`, mede as mesmas trinta requisições, compara com a
  * mesma baseline e publica o mesmo painel. A diferença começa e termina na
  * variável de ambiente entregue ao processo filho.
  *
@@ -18,7 +18,8 @@
  *    este arquivo, no `env` do `spawn`; o backend só sabe ler
  *    `DEMO_ANOMALY_MODE`. É por isso que rodar `npm start` na mão nunca produz
  *    atraso: não existe padrão ligado em lugar nenhum.
- * 3. **Um cenário só.** `SCENARIOS` tem uma entrada — `latency`. Modo
+ * 3. **Só o que está implementado no backend.** `SCENARIOS` tem exatamente as
+ *    entradas que `backend/src/demo-anomalies.js` sabe provocar. Modo
  *    desconhecido falha alto, listando o que existe, em vez de rodar o
  *    laboratório sem anomalia alguma e deixar a aula concluir que o detector não
  *    funciona.
@@ -47,6 +48,14 @@ export const DEMO_ANOMALY_ENV_VAR = 'DEMO_ANOMALY_MODE';
  * do detector. Ele serve para o comando dizer, no fim, se o cenário reproduziu
  * o que prometia: um laboratório que provoca latência e detecta outra coisa é
  * um laboratório com um problema, e o silêncio esconderia isso.
+ *
+ * `mode` e `expectedAnomalyType` são campos diferentes porque são vocabulários
+ * diferentes, e igualá-los seria alinhar dois arquivos que não se conhecem. O
+ * `mode` é o que o usuário digita e o que vai para `DEMO_ANOMALY_MODE`
+ * (`error-rate`); o `anomalyType` é o que o `detect.mjs` publica há mais tempo
+ * (`error_rate`). Renomear a regra do detector para fechar a diferença mudaria
+ * o conteúdo de relatórios já gerados — e o detector não muda por causa de um
+ * cenário.
  */
 export const SCENARIOS = {
   latency: {
@@ -56,6 +65,14 @@ export const SCENARIOS = {
     summary: 'a cada terceira requisição, 500 ms de espera antes do mesmo 200',
     expectedSignal: 'latencyP95Ms',
     expectedAnomalyType: 'latency',
+  },
+  'error-rate': {
+    mode: 'error-rate',
+    envValue: 'error-rate',
+    label: 'erro intermitente',
+    summary: 'a cada quinta requisição, HTTP 500 controlado no lugar do relatório (~20%)',
+    expectedSignal: 'errorRate',
+    expectedAnomalyType: 'error_rate',
   },
 };
 

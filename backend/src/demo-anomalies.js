@@ -3,36 +3,56 @@
  *
  * Este módulo existe para **provocar** o sintoma que o detector do
  * `automation/src/day2/` deve encontrar. Ele não mede, não decide e não sabe o
- * que é uma baseline: a única coisa que faz é atrasar uma requisição em cada
- * três quando alguém pede explicitamente por isso.
+ * que é uma baseline: a única coisa que faz é degradar `GET /api/report` de uma
+ * forma escolhida, quando alguém pede explicitamente por ela.
  *
- * Quatro decisões que valem para quem for evoluir:
+ * Cinco decisões que valem para quem for evoluir:
  *
  * 1. **Sem a variável, o módulo não existe.** `DEMO_ANOMALY_MODE` é lida a cada
- *    requisição e, fora do modo `latency`, o middleware chama `next()` antes de
- *    qualquer outra coisa — nem contador avança, nem log é emitido, nem timer é
- *    criado. Um atraso que sobrevive à ausência da variável é um atraso que
- *    entra em produção sem que ninguém tenha pedido.
- * 2. **Só a rota funcional.** O middleware é montado em `GET /api/report` e em
- *    lugar nenhum mais. `/api/health` precisa continuar rápido: é ele que a
- *    observação usa para saber que a aplicação subiu, e um health check lento
- *    transformaria o cenário em falha de inicialização.
- * 3. **O atraso é espera, não trabalho.** A resposta continua sendo o mesmo 200
- *    com o mesmo corpo — o relatório de negócio não é tocado. A anomalia está no
- *    tempo, e só nele, porque é exatamente um sinal (`latencyP95Ms`) que o
- *    cenário quer mover.
- * 4. **A falha do cenário não vira 500.** Se a espera ou o log falharem, a
- *    requisição segue para o handler mesmo assim. Um recurso de demonstração não
- *    tem licença para reprovar a rota que ele está demonstrando.
+ *    requisição e, fora do modo que cada middleware reconhece, ele chama
+ *    `next()` antes de qualquer outra coisa — nem contador avança, nem log é
+ *    emitido, nem timer é criado, nem erro é construído. Um atraso (ou um 500)
+ *    que sobrevive à ausência da variável é um atraso que entra em produção sem
+ *    que ninguém tenha pedido.
+ * 2. **Um modo por vez.** `createDemoAnomaly` encadeia os cenários, mas cada um
+ *    só age no seu próprio valor de `DEMO_ANOMALY_MODE`. Dois sintomas ao mesmo
+ *    tempo ensinariam a ler duas anomalias onde o laboratório provoca uma, e o
+ *    `firstAnomalousSignal` do detector passaria a depender da ordem do
+ *    encadeamento em vez da ordem das regras.
+ * 3. **Só a rota funcional.** O middleware é montado em `GET /api/report` e em
+ *    lugar nenhum mais. `/api/health` precisa continuar rápido e em 200: é ele
+ *    que a observação usa para saber que a aplicação subiu, e um health check
+ *    lento ou reprovado transformaria qualquer cenário em falha de
+ *    inicialização.
+ * 4. **Cada cenário move um sinal, e só um.**
+ *    - `latency`: espera antes do mesmo 200, com o mesmo corpo — a anomalia está
+ *      no tempo, porque é `latencyP95Ms` que o cenário quer mover.
+ *    - `error-rate`: 500 no lugar do relatório, sem atraso e sem log extra — a
+ *      anomalia está em `errorRate`, e só nele. As duas linhas de log de uma
+ *      requisição que falha (a do cenário e a do `requestLogger`) são as mesmas
+ *      duas de uma que dá certo, de propósito: `logLinesPerRequest` não pode
+ *      subir junto.
+ * 5. **A falha do cenário não muda o veredito da requisição.** Se a espera ou o
+ *    log falharem, o `latency` segue para o handler e o `error-rate` continua
+ *    devolvendo o seu 500. O log é um efeito colateral do cenário, nunca a
+ *    condição dele — um `catch` mudo em volta do `emit` é o que garante que a
+ *    proporção observada seja a proporção implementada.
  */
 
+import { HttpError } from './middleware/errorHandler.js';
 import { logEvent } from './logging/structured-logger.js';
 
 /** A variável que liga o laboratório. Sem ela, nada acontece. */
 export const DEMO_ANOMALY_ENV_VAR = 'DEMO_ANOMALY_MODE';
 
-/** O único cenário implementado. */
+/** Cenário de latência intermitente. */
 export const LATENCY_MODE = 'latency';
+
+/** Cenário de erro intermitente. */
+export const ERROR_RATE_MODE = 'error-rate';
+
+/** Os modos implementados, na ordem em que foram adicionados ao laboratório. */
+export const DEMO_ANOMALY_MODES = [LATENCY_MODE, ERROR_RATE_MODE];
 
 /**
  * Espera injetada, em milissegundos.
@@ -54,6 +74,36 @@ export const LATENCY_DELAY_MS = 500;
 export const LATENCY_EVERY = 3;
 
 /**
+ * Uma requisição em cada cinco — 20% das chamadas.
+ *
+ * A regra do detector para `errorRate` exige **duas** condições: `observado ≥
+ * 0,15` **e** `observado − baseline ≥ 0,10`. Com 30 requisições medidas, uma
+ * falha em cada cinco dá 6 erros e `errorRate: 0,2`, que passa nas duas com
+ * folga sobre uma baseline saudável (`errorRate: 0`). Uma em cada dez daria
+ * 0,1 e não passaria em nenhuma — a proporção é escolhida por causa da conta,
+ * como em `LATENCY_EVERY`.
+ */
+export const ERROR_RATE_EVERY = 5;
+
+/**
+ * Código do erro devolvido, e nome com que ele aparece no log.
+ *
+ * O nome diz `demo` na cara: quem encontrar este 500 num log às três da manhã
+ * precisa saber, na própria linha, que a causa é o laboratório e não a
+ * aplicação. Um `INTERNAL_ERROR` genérico aqui seria um bug fantasma versionado.
+ */
+export const ERROR_RATE_CODE = 'DEMO_ANOMALY_ERROR';
+export const ERROR_RATE_ERROR_NAME = 'DemoAnomalyError';
+
+/**
+ * Mensagem do erro controlado. Vai para o corpo da resposta pelo `errorHandler`
+ * (é um `HttpError`, logo a mensagem é publicável de propósito) e não carrega
+ * nada além do que já está neste arquivo.
+ */
+export const ERROR_RATE_MESSAGE =
+  'anomalia do laboratório do Dia 2: falha controlada em GET /api/report';
+
+/**
  * O modo pedido no ambiente, normalizado.
  *
  * @param {NodeJS.ProcessEnv} [env]
@@ -69,6 +119,14 @@ export function readAnomalyMode(env = process.env) {
  */
 export function latencyModeEnabled(env = process.env) {
   return readAnomalyMode(env) === LATENCY_MODE;
+}
+
+/**
+ * @param {NodeJS.ProcessEnv} [env]
+ * @returns {boolean}
+ */
+export function errorRateModeEnabled(env = process.env) {
+  return readAnomalyMode(env) === ERROR_RATE_MODE;
 }
 
 /**
@@ -143,6 +201,135 @@ export function createLatencyAnomaly({
       () => next(),
     );
   };
+}
+
+/**
+ * Middleware que reprova uma requisição em cada `every` com um 500 controlado.
+ *
+ * Três coisas que este middleware **não** faz, e cada ausência é uma decisão:
+ *
+ * - **Não responde.** Ele chama `next(error)` e o `errorHandler` do
+ *   `app.js` monta o 500. A resposta de erro do laboratório é byte a byte a
+ *   mesma de qualquer outra falha da aplicação (`{ error: { code, message },
+ *   requestId }`), porque um cenário que inventa o próprio formato de erro
+ *   ensina a reconhecer o cenário, não a falha.
+ * - **Não espera.** Sem `sleep`: um 500 que também demorasse moveria
+ *   `latencyP95Ms` junto e o `firstAnomalousSignal` viraria `latencyP95Ms`,
+ *   apontando o sintoma errado.
+ * - **Não altera o relatório.** As requisições que sobram (4 em 5) devolvem o
+ *   mesmo 200 com o mesmo corpo de sempre. `buildReport` sequer é alcançado nas
+ *   que falham, e não é tocado nas que passam.
+ *
+ * O contador é do middleware, e não do processo, pelo mesmo motivo do
+ * `createLatencyAnomaly`: cada roteador criado tem o seu, e um teste consegue
+ * contar de 1 a 10 sem herdar o estado do teste anterior.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {object} [options.log] emissor de log estruturado
+ * @param {number} [options.every]
+ * @returns {import('express').RequestHandler}
+ */
+export function createErrorRateAnomaly({
+  env = process.env,
+  log = logEvent,
+  every = ERROR_RATE_EVERY,
+} = {}) {
+  let requestCount = 0;
+
+  return function demoErrorRateAnomaly(req, res, next) {
+    // Ver decisão 1: a saída antecipada vem antes do contador.
+    if (!errorRateModeEnabled(env)) {
+      next();
+      return;
+    }
+
+    requestCount += 1;
+    if (requestCount % every !== 0) {
+      next();
+      return;
+    }
+
+    try {
+      log.emit({
+        level: 'error',
+        eventType: 'demo.anomaly.error-rate',
+        phase: 'functional',
+        // A contagem entra na mensagem pelo mesmo motivo que na latência: é ela
+        // que torna a regra conferível no log — a falha aparece em 5, 10, 15… e
+        // em mais nenhuma.
+        message:
+          `anomalia de taxa de erro do laboratório na requisição ${requestCount}: ` +
+          'HTTP 500 controlado no lugar do relatório',
+        fields: {
+          requestId: req.id,
+          path: req.originalUrl,
+          statusCode: 500,
+          functionalArea: 'report',
+          errorName: ERROR_RATE_ERROR_NAME,
+        },
+      });
+    } catch {
+      // Ver decisão 5. Um log que falhou não muda quais requisições falham.
+    }
+
+    next(demoAnomalyError());
+  };
+}
+
+/**
+ * Compõe os cenários disponíveis num único middleware.
+ *
+ * O encadeamento é seguro porque cada middleware sai antes do contador quando o
+ * seu modo não é o pedido (decisão 1): com `DEMO_ANOMALY_MODE` ausente, a
+ * requisição atravessa os dois sem que nenhum estado se mova.
+ *
+ * @param {object} [options]
+ * @param {NodeJS.ProcessEnv} [options.env]
+ * @param {object} [options.log]
+ * @param {(ms: number) => Promise<void>} [options.sleep]
+ * @returns {import('express').RequestHandler}
+ */
+export function createDemoAnomaly({ env = process.env, log = logEvent, sleep = defaultSleep } = {}) {
+  const scenarios = [
+    createLatencyAnomaly({ env, log, sleep }),
+    createErrorRateAnomaly({ env, log }),
+  ];
+
+  return function demoAnomaly(req, res, next) {
+    const step = (index) => (error) => {
+      // Erro de um cenário anterior é o cenário, não engano: vai direto para o
+      // `errorHandler` sem passar pelos seguintes.
+      if (error) {
+        next(error);
+        return;
+      }
+      if (index >= scenarios.length) {
+        next();
+        return;
+      }
+      scenarios[index](req, res, step(index + 1));
+    };
+
+    step(0)();
+  };
+}
+
+/**
+ * O erro controlado do cenário `error-rate`.
+ *
+ * `HttpError` (e não um `Error` cru) porque o status é uma decisão, não uma
+ * surpresa: o `errorHandler` devolve 500 com o código do laboratório em vez de
+ * classificar isto como "erro inesperado" e registrar mais uma linha de log —
+ * linha que inflaria `logLinesPerRequest` e daria ao detector um segundo sinal
+ * para reclamar.
+ *
+ * @returns {HttpError}
+ */
+function demoAnomalyError() {
+  const error = new HttpError(500, ERROR_RATE_CODE, ERROR_RATE_MESSAGE);
+  error.name = ERROR_RATE_ERROR_NAME;
+  return error;
 }
 
 /**

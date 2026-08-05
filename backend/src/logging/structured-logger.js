@@ -52,11 +52,12 @@ export const LOG_EVENT_TYPES = [
   'health.check.completed',
   'functional.report.completed',
   'functional.report.failed',
-  // Anomalia injetada de propósito pelo laboratório do Dia 2
-  // (`demo-anomalies.js`). Está na lista pelo mesmo motivo que os outros: o
+  // Anomalias injetadas de propósito pelo laboratório do Dia 2
+  // (`demo-anomalies.js`). Estão na lista pelo mesmo motivo que os outros: o
   // evento precisa ser reconhecível por quem lê o log com código. O prefixo
   // `demo.` diz, no próprio nome, que a causa é o laboratório e não a aplicação.
   'demo.anomaly.latency',
+  'demo.anomaly.error-rate',
 ];
 
 /**
