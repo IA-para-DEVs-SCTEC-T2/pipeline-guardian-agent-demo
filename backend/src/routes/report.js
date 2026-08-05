@@ -1,5 +1,6 @@
 import { Router } from 'express';
 
+import { createLatencyAnomaly } from '../demo-anomalies.js';
 import { describeError, logEvent } from '../logging/structured-logger.js';
 import { buildReport } from '../services/report.js';
 import { listStickers } from '../store/store.js';
@@ -19,16 +20,26 @@ import { listStickers } from '../store/store.js';
  * O erro é repassado ao `errorHandler` (não é engolido): o log registra, o
  * cliente continua recebendo o 500 padronizado.
  *
+ * O laboratório do Dia 2 entra aqui, e só aqui: `demoAnomaly` é o middleware de
+ * `demo-anomalies.js`, inerte enquanto `DEMO_ANOMALY_MODE` não pedir um cenário.
+ * Ele fica **antes** do handler porque a anomalia é atraso na resposta, não
+ * mudança no relatório — o corpo devolvido é o mesmo com ou sem cenário ligado.
+ *
  * @param {object} [options]
  * @param {object} [options.log] emissor injetável (testes)
  * @param {() => object} [options.build] produtor do relatório — injetável para
  *        que o caminho de falha seja exercitável sem corromper o store real
+ * @param {import('express').RequestHandler} [options.demoAnomaly] cenário do Dia 2
  * @returns {import('express').Router}
  */
-export function createReportRouter({ log = logEvent, build = defaultBuild } = {}) {
+export function createReportRouter({
+  log = logEvent,
+  build = defaultBuild,
+  demoAnomaly = createLatencyAnomaly({ log }),
+} = {}) {
   const router = Router();
 
-  router.get('/', (req, res, next) => {
+  router.get('/', demoAnomaly, (req, res, next) => {
     try {
       const report = build();
       res.json(report);

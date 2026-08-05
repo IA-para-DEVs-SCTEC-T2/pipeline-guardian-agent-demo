@@ -19,6 +19,7 @@
     "pipeline:fixture": "node src/pipeline-report.mjs --fixture",
     "day2:baseline": "node src/day2/run.mjs --baseline",
     "day2:check": "node src/day2/run.mjs",
+    "day2:scenario": "node src/day2/scenario.mjs",
     "test": "vitest run",
     "test:day2": "vitest run day-2",
     "lint": "eslint ."

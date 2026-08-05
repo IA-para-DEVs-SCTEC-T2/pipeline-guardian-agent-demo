@@ -35,7 +35,8 @@
     "pipeline:report": "node automation/src/pipeline-report.mjs",
     "pipeline:fixture": "node automation/src/pipeline-report.mjs --fixture",
     "day2:baseline": "node automation/src/day2/run.mjs --baseline",
-    "day2:check": "node automation/src/day2/run.mjs"
+    "day2:check": "node automation/src/day2/run.mjs",
+    "day2:scenario": "node automation/src/day2/scenario.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
