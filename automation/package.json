@@ -17,7 +17,10 @@
     "operational:fixture": "node src/operational-report.mjs --fixture",
     "pipeline:report": "node src/pipeline-report.mjs",
     "pipeline:fixture": "node src/pipeline-report.mjs --fixture",
+    "day2:baseline": "node src/day2/run.mjs --baseline",
+    "day2:check": "node src/day2/run.mjs",
     "test": "vitest run",
+    "test:day2": "vitest run day-2",
     "lint": "eslint ."
   },
   "devDependencies": {
