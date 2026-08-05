@@ -243,6 +243,87 @@ function noisyLogsObservation() {
   };
 }
 
+/**
+ * Bytes da resposta inflada, como o backend a produz: seis cópias de
+ * `duplicateStickers` levam o relatório de 1968 para 6623 bytes.
+ *
+ * O número não é escolhido pelo fixture — ele é o que
+ * `backend/test/demo-anomalies.test.js` mede sobre a resposta de verdade. Aqui
+ * ele serve para verificar a conta do detector: `6623 ≥ 1968 × 3` (5904) e
+ * `6623 − 1968 = 4655 ≥ 1500`. As duas condições da regra `payload_size`, com
+ * folga nas duas.
+ */
+const BLOATED_BYTES = 6623;
+
+/**
+ * Trinta amostras com o efeito que o modo `payload-bloat` produz: **toda**
+ * requisição devolve o mesmo 200, no mesmo tempo, com o mesmo formato — e com o
+ * corpo mais de três vezes maior.
+ *
+ * A ausência de intermitência é o desenho do cenário, não descuido do fixture:
+ * o sintoma imitado é uma regressão de formato (a serialização passou a repetir
+ * uma lista), e alternar entre dois corpos para o mesmo `GET` ensinaria "a rota
+ * está instável" no lugar de "a resposta cresceu".
+ *
+ * A linha de log a mais por requisição (2 → 3) também é do backend, e está aqui
+ * para que o teste confirme que ela **não** dispara o sinal de volume: a regra
+ * `log_volume` só passa a partir de 7.
+ */
+function payloadBloatObservation() {
+  const samples = Array.from({ length: 30 }, (_, index) => {
+    const sequence = index + 1;
+
+    return {
+      sequence,
+      statusCode: 200,
+      durationMs: FAST_MS,
+      responseSizeBytes: BLOATED_BYTES,
+      // As duas linhas de sempre mais a do cenário.
+      logLineCount: 3,
+      requestId: `day2-${sequence}-uuid`,
+    };
+  });
+
+  return {
+    samples,
+    summary: summarizeSamples(samples),
+    logEvents: samples.flatMap((sample) => [
+      {
+        schemaVersion: 1,
+        time: '2026-08-05T10:00:00.000Z',
+        level: 'info',
+        eventType: 'functional.report.completed',
+        phase: 'functional',
+        message: 'relatório do álbum gerado',
+        requestId: sample.requestId,
+        statusCode: 200,
+      },
+      {
+        schemaVersion: 1,
+        time: '2026-08-05T10:00:00.001Z',
+        // `warn`, não `error`: a resposta é um 200, e `error` viraria evidência
+        // de incidente na seleção de fatos do diagnóstico operacional.
+        level: 'warn',
+        eventType: 'demo.anomaly.payload-bloat',
+        phase: 'functional',
+        message:
+          `anomalia de payload inflado do laboratório na requisição ${sample.sequence}: ` +
+          `lista \`duplicateStickers\` repetida 6× (1968 → ${BLOATED_BYTES} bytes, 3.37× o normal)`,
+        requestId: sample.requestId,
+        statusCode: 200,
+      },
+    ]),
+    logCorrelation: 'request_id',
+    noiseLines: [],
+    warmupRequests: 5,
+    startedAt: '2026-08-05T10:00:00.000Z',
+    finishedAt: '2026-08-05T10:00:20.000Z',
+    port: 3102,
+    path: '/api/report',
+    limitations: [],
+  };
+}
+
 const dirs = [];
 function tempDir() {
   const dir = mkdtempSync(join(tmpdir(), 'day2-scenario-'));
@@ -283,10 +364,11 @@ async function run({ mode = 'latency', observation = latencyObservation(), outDi
 
 describe('resolveScenario', () => {
   it('conhece os cenários que o backend sabe provocar', () => {
-    expect(SCENARIO_MODES).toEqual(['latency', 'error-rate', 'noisy-logs']);
+    expect(SCENARIO_MODES).toEqual(['latency', 'error-rate', 'noisy-logs', 'payload-bloat']);
     expect(SCENARIOS.latency.expectedSignal).toBe('latencyP95Ms');
     expect(SCENARIOS['error-rate'].expectedSignal).toBe('errorRate');
     expect(SCENARIOS['noisy-logs'].expectedSignal).toBe('logLinesPerRequest');
+    expect(SCENARIOS['payload-bloat'].expectedSignal).toBe('responseSizeP95Bytes');
   });
 
   it('mantém o modo do laboratório separado do tipo publicado pelo detector', () => {
@@ -301,21 +383,30 @@ describe('resolveScenario', () => {
     // é o evento emitido (singular). Três nomes, três vocabulários.
     expect(SCENARIOS['noisy-logs'].envValue).toBe('noisy-logs');
     expect(SCENARIOS['noisy-logs'].expectedAnomalyType).toBe('log_volume');
+
+    // E no cenário de payload: `payload-bloat` é o modo do laboratório,
+    // `payload_size` é o tipo publicado pelo detector. O detector não é
+    // renomeado para ficar parecido com o cenário — relatórios já gerados
+    // continuariam dizendo `payload_size`.
+    expect(SCENARIOS['payload-bloat'].envValue).toBe('payload-bloat');
+    expect(SCENARIOS['payload-bloat'].expectedAnomalyType).toBe('payload_size');
   });
 
   it('aceita o modo com espaço e caixa diferentes', () => {
     expect(resolveScenario(' Latency ').mode).toBe('latency');
     expect(resolveScenario(' Error-Rate ').mode).toBe('error-rate');
     expect(resolveScenario(' Noisy-Logs ').mode).toBe('noisy-logs');
+    expect(resolveScenario(' Payload-Bloat ').mode).toBe('payload-bloat');
   });
 
   it('recusa um modo desconhecido dizendo o que existe', () => {
     expect(() => resolveScenario('payload')).toThrow(
-      /desconhecido.*latency, error-rate, noisy-logs/s,
+      /desconhecido.*latency, error-rate, noisy-logs, payload-bloat/s,
     );
     expect(() => resolveScenario('')).toThrow(/day2:scenario -- latency/);
     // O sublinhado do detector não é um modo do laboratório.
     expect(() => resolveScenario('error_rate')).toThrow(/desconhecido/);
+    expect(() => resolveScenario('payload_size')).toThrow(/desconhecido/);
     // O nome do evento também não: ele é singular, o modo é plural.
     expect(() => resolveScenario('noisy-log')).toThrow(/desconhecido/);
   });
@@ -540,6 +631,88 @@ describe('runScenario: excesso de logs', () => {
     const html = readFileSync(paths.htmlPath, 'utf8');
     expect(html).toContain('<!doctype html>');
     expect(html).toContain('Linhas de log por requisição');
+
+    // Sem chave no ambiente, a explicação é a determinística — nenhuma chamada
+    // de rede acontece nos testes.
+    expect(written.usedFallback).toBe(true);
+    expect(written.explanation.summary.length).toBeGreaterThan(0);
+  });
+});
+
+describe('runScenario: payload inflado', () => {
+  const runBloat = (extra = {}) =>
+    run({ mode: 'payload-bloat', observation: payloadBloatObservation(), ...extra });
+
+  it('entrega `DEMO_ANOMALY_MODE=payload-bloat` ao backend observado', async () => {
+    const { calls } = await runBloat();
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].env).toEqual({ [DEMO_ANOMALY_ENV_VAR]: 'payload-bloat' });
+  });
+
+  it('detecta a anomalia com `responseSizeP95Bytes` como primeiro sinal', async () => {
+    const { detection, reproduced } = await runBloat();
+
+    expect(detection.anomalyDetected).toBe(true);
+    expect(detection.gateResult).toBe('anomaly');
+    expect(detection.firstAnomalousSignal).toBe('responseSizeP95Bytes');
+    expect(detection.anomalyTypes).toContain('payload_size');
+    expect(reproduced).toBe(true);
+  });
+
+  it('move `responseSizeP95Bytes` de 1968 para 6623, e só ele', async () => {
+    const { report } = await runBloat();
+
+    // Seis cópias de `duplicateStickers`: `6623 ≥ 1968 × 3` (5904) e
+    // `6623 − 1968 = 4655 ≥ 1500`. As duas condições da regra `payload_size`.
+    expect(report.observed.responseSizeP95Bytes).toBe(BLOATED_BYTES);
+    expect(report.baseline.responseSizeP95Bytes).toBe(1968);
+
+    const payload = detectionOf(report, 'responseSizeP95Bytes');
+    expect(payload.triggered).toBe(true);
+    expect(payload.conditions.every((condition) => condition.met)).toBe(true);
+
+    // A repetição não espera e não falha: os dois primeiros sinais ficam onde
+    // estavam.
+    expect(report.observed.latencyP95Ms).toBe(FAST_MS);
+    expect(report.observed.errorRate).toBe(0);
+
+    // A linha de log do cenário existe (2 → 3) e **não** dispara o sinal de
+    // volume: a regra `log_volume` exige `≥ 6` e `Δ ≥ 5`, o que põe o piso em 7.
+    expect(report.observed.logLinesPerRequest).toBe(3);
+
+    for (const signal of ['latencyP95Ms', 'errorRate', 'logLinesPerRequest']) {
+      expect(detectionOf(report, signal).triggered).toBe(false);
+    }
+
+    // `responseSizeP95Bytes` é o **quarto** da ordem de `ANOMALY_RULES`: ele só
+    // é o primeiro sinal porque nenhum dos três anteriores disparou. Um cenário
+    // de payload que também atrasasse a resposta apontaria `latencyP95Ms`.
+    expect(report.detection.anomalyTypes).toEqual(['payload_size']);
+  });
+
+  it('todas as trinta requisições continuam em 200, com o mesmo tamanho', async () => {
+    const { report } = await runBloat();
+
+    expect(report.samples).toHaveLength(30);
+    expect(report.samples.every((sample) => sample.statusCode === 200)).toBe(true);
+    expect(report.samples.every((sample) => sample.responseSizeBytes === BLOATED_BYTES)).toBe(true);
+    expect(report.observed.errorRate).toBe(0);
+  });
+
+  it('publica o painel com o sinal de payload como primeiro', async () => {
+    const { paths, outDir } = await runBloat();
+
+    expect(paths.jsonPath).toBe(join(outDir, 'anomaly-report.json'));
+
+    const written = JSON.parse(readFileSync(paths.jsonPath, 'utf8'));
+    expect(written.detection.firstAnomalousSignal).toBe('responseSizeP95Bytes');
+    expect(written.detection.anomalyTypes).toContain('payload_size');
+    expect(written.scope).toBe('day-2-anomaly-lab');
+
+    const html = readFileSync(paths.htmlPath, 'utf8');
+    expect(html).toContain('<!doctype html>');
+    expect(html).toContain('Tamanho da resposta (P95)');
 
     // Sem chave no ambiente, a explicação é a determinística — nenhuma chamada
     // de rede acontece nos testes.

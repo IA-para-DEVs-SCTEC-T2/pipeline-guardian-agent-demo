@@ -19,13 +19,21 @@ import {
   NOISY_LOGS_EXTRA_EVENTS,
   NOISY_LOGS_LEVEL,
   NOISY_LOGS_MODE,
+  PAYLOAD_BLOAT_LEVEL,
+  PAYLOAD_BLOAT_LIST_KEY,
+  PAYLOAD_BLOAT_MIN_EXTRA_BYTES,
+  PAYLOAD_BLOAT_MIN_FACTOR,
+  PAYLOAD_BLOAT_MODE,
   createDemoAnomaly,
   createErrorRateAnomaly,
   createLatencyAnomaly,
   createNoisyLogsAnomaly,
+  createPayloadBloatAnomaly,
   errorRateModeEnabled,
+  inflateReportBody,
   latencyModeEnabled,
   noisyLogsModeEnabled,
+  payloadBloatModeEnabled,
 } from '../src/demo-anomalies.js';
 import { LOG_EVENT_TYPES } from '../src/logging/structured-logger.js';
 import { HttpError } from '../src/middleware/errorHandler.js';
@@ -552,6 +560,354 @@ describe('createNoisyLogsAnomaly: sem a variável não existe log extra', () => 
 });
 
 /* ------------------------------------------------------------------------- */
+/* Cenário `payload-bloat`                                                    */
+/* ------------------------------------------------------------------------- */
+
+/**
+ * Um relatório com a forma que importa para o cenário: os agregados e as três
+ * listas. Sintético e não o do store, para que o teste possa encolher a lista e
+ * verificar o piso absoluto — o seed real nunca chega perto dele.
+ *
+ * @param {object} [options]
+ * @param {number} [options.duplicates] itens em `duplicateStickers`
+ * @returns {object}
+ */
+function reportBody({ duplicates = 5 } = {}) {
+  return {
+    totalRegistered: 12,
+    obtained: 9,
+    missing: 3,
+    duplicateCopies: 7,
+    completionPercentage: 75,
+    byCountry: [
+      { country: 'Brasil', countryCode: 'BR', total: 5, obtained: 4, missing: 1, duplicateCopies: 3 },
+    ],
+    missingStickers: [
+      {
+        id: 'sticker-9',
+        albumNumber: 9,
+        playerName: 'Jogador Ausente',
+        country: 'Brasil',
+        countryCode: 'BR',
+        position: 'defender',
+        quantity: 0,
+      },
+    ],
+    duplicateStickers: Array.from({ length: duplicates }, (_, index) => ({
+      id: `sticker-${index + 1}`,
+      albumNumber: index + 1,
+      playerName: `Jogador Repetido ${index + 1}`,
+      country: 'Brasil',
+      countryCode: 'BR',
+      position: 'midfielder',
+      quantity: 3,
+      duplicateCopies: 2,
+    })),
+  };
+}
+
+function bytesOf(value) {
+  return Buffer.byteLength(JSON.stringify(value), 'utf8');
+}
+
+describe('inflateReportBody: repete uma lista, e só ela', () => {
+  it('repete `duplicateStickers` até o corpo passar dos dois pisos da regra', () => {
+    const body = reportBody();
+    const result = inflateReportBody(body);
+
+    expect(result.applied).toBe(true);
+    expect(result.copies).toBeGreaterThan(1);
+    expect(result.inflatedBytes).toBe(bytesOf(result.body));
+
+    // As duas condições da regra `payload_size` do detector, conferidas do lado
+    // do cenário: `observado ≥ baseline × 3` e `observado − baseline ≥ 1500`.
+    // É o cenário que se ajusta à regra, e é aqui que isso fica provado.
+    expect(result.inflatedBytes).toBeGreaterThanOrEqual(
+      result.originalBytes * PAYLOAD_BLOAT_MIN_FACTOR,
+    );
+    expect(result.inflatedBytes - result.originalBytes).toBeGreaterThanOrEqual(
+      PAYLOAD_BLOAT_MIN_EXTRA_BYTES,
+    );
+    expect(result.factor).toBeGreaterThanOrEqual(PAYLOAD_BLOAT_MIN_FACTOR);
+  });
+
+  it('mantém o formato geral: mesmos campos, mesmos números, mesmas outras listas', () => {
+    const body = reportBody();
+    const { body: inflated } = inflateReportBody(body);
+
+    expect(Object.keys(inflated)).toEqual(Object.keys(body));
+    // Os agregados continuam certos. Um corpo com números remendados para
+    // "combinar" com a lista repetida seria dado errado, não payload inflado.
+    expect(inflated.totalRegistered).toBe(body.totalRegistered);
+    expect(inflated.obtained).toBe(body.obtained);
+    expect(inflated.missing).toBe(body.missing);
+    expect(inflated.duplicateCopies).toBe(body.duplicateCopies);
+    expect(inflated.completionPercentage).toBe(body.completionPercentage);
+
+    // Uma lista repetida, e uma só.
+    expect(inflated.byCountry).toEqual(body.byCountry);
+    expect(inflated.missingStickers).toEqual(body.missingStickers);
+    expect(inflated[PAYLOAD_BLOAT_LIST_KEY]).toEqual(
+      Array.from({ length: inflated[PAYLOAD_BLOAT_LIST_KEY].length / body.duplicateStickers.length })
+        .flatMap(() => body.duplicateStickers),
+    );
+  });
+
+  it('não muta o corpo recebido', () => {
+    const body = reportBody();
+    const before = JSON.stringify(body);
+
+    const result = inflateReportBody(body);
+
+    // O objeto que entrou aqui é o mesmo que `buildReport` montou a partir do
+    // store. Ele sai como entrou: a cópia inflada é outra, e só ela é enviada.
+    expect(JSON.stringify(body)).toBe(before);
+    expect(body.duplicateStickers).toHaveLength(5);
+    expect(result.body).not.toBe(body);
+  });
+
+  it('honra o piso absoluto quando o triplo não é diferença suficiente', () => {
+    // Um relatório pequeno: `× 3` seria alcançado muito antes de `+ 1500 bytes`,
+    // e o payload inflado não viraria anomalia. O alvo é o maior dos dois.
+    const body = reportBody({ duplicates: 1 });
+    const result = inflateReportBody(body);
+
+    expect(result.originalBytes * PAYLOAD_BLOAT_MIN_FACTOR).toBeLessThan(
+      result.originalBytes + PAYLOAD_BLOAT_MIN_EXTRA_BYTES,
+    );
+    expect(result.inflatedBytes - result.originalBytes).toBeGreaterThanOrEqual(
+      PAYLOAD_BLOAT_MIN_EXTRA_BYTES,
+    );
+    expect(result.factor).toBeGreaterThanOrEqual(PAYLOAD_BLOAT_MIN_FACTOR);
+  });
+
+  it('para no teto de cópias e declara o fator que alcançou', () => {
+    const result = inflateReportBody(reportBody(), { maxCopies: 2 });
+
+    // O laço é limitado nos dois lados. Quando o teto chega antes do alvo, o
+    // resultado diz o fator real em vez de fingir que atingiu o pedido.
+    expect(result.copies).toBe(2);
+    expect(result.applied).toBe(true);
+    expect(result.factor).toBeLessThan(PAYLOAD_BLOAT_MIN_FACTOR);
+  });
+
+  it('devolve intacto o que não tem lista para repetir', () => {
+    // A resposta de erro padronizada da aplicação passa pelo mesmo `res.json`.
+    const errorBody = { error: { code: 'X', message: 'y' }, requestId: 'abc' };
+    const emptyList = { ...reportBody(), duplicateStickers: [] };
+
+    for (const body of [errorBody, emptyList, { semLista: 1 }, null, 'texto', [1, 2, 3]]) {
+      const result = inflateReportBody(body);
+      expect(result.applied).toBe(false);
+      expect(result.body).toBe(body);
+    }
+  });
+
+  it('desiste em silêncio quando o corpo não serializa', () => {
+    const circular = reportBody();
+    circular.self = circular;
+
+    const result = inflateReportBody(circular);
+
+    expect(result.applied).toBe(false);
+    expect(result.body).toBe(circular);
+  });
+});
+
+/**
+ * O middleware é exercitado com uma resposta falsa que registra o que chegou ao
+ * `res.json` original — que é o único lugar onde dá para ver **o corpo que
+ * saiu**, e não o corpo que o handler quis enviar.
+ */
+function payloadHarness({ env = { [DEMO_ANOMALY_ENV_VAR]: PAYLOAD_BLOAT_MODE }, log } = {}) {
+  const events = [];
+
+  const middleware = createPayloadBloatAnomaly({
+    env,
+    log: log ?? { emit: (event) => events.push(event) },
+  });
+
+  /**
+   * Executa uma requisição e responde com `body`, devolvendo o que o Express
+   * teria serializado.
+   */
+  const run = (sequence, body = reportBody()) => {
+    const sent = [];
+    const res = {
+      json: (payload) => {
+        sent.push(payload);
+        return res;
+      },
+    };
+    const originalJson = res.json;
+
+    let continued = false;
+    middleware({ id: `req-${sequence}`, originalUrl: '/api/report' }, res, () => {
+      continued = true;
+    });
+
+    // Lido **depois** da chamada e sem `await`: se o middleware tivesse
+    // agendado qualquer coisa, `continued` ainda seria `false` aqui.
+    const synchronous = continued;
+    const wrapped = res.json !== originalJson;
+
+    res.json(body);
+
+    return { synchronous, wrapped, res, sent };
+  };
+
+  return { run, events };
+}
+
+describe('createPayloadBloatAnomaly: toda requisição, sem esperar e sem reprovar', () => {
+  it('infla todas as requisições, e não uma em cada N', () => {
+    const lab = payloadHarness();
+
+    const results = [];
+    for (let sequence = 1; sequence <= 6; sequence += 1) {
+      results.push(lab.run(sequence));
+    }
+
+    // O sintoma imitado é uma regressão de formato, não um evento esporádico:
+    // duas respostas diferentes para o mesmo `GET` ensinariam "a rota está
+    // instável" no lugar de "a resposta cresceu".
+    const sizes = results.map((result) => bytesOf(result.sent[0]));
+    expect(new Set(sizes).size).toBe(1);
+    expect(sizes[0]).toBeGreaterThanOrEqual(bytesOf(reportBody()) * PAYLOAD_BLOAT_MIN_FACTOR);
+    expect(lab.events).toHaveLength(6);
+  });
+
+  it('não espera, não reprova e devolve o mesmo formato', () => {
+    const lab = payloadHarness();
+    const { synchronous, wrapped, sent } = lab.run(1);
+
+    // Sem atraso: o `next` já tinha sido chamado quando o harness olhou. Uma
+    // inflação que demorasse moveria `latencyP95Ms` junto.
+    expect(synchronous).toBe(true);
+    expect(wrapped).toBe(true);
+    expect(sent).toHaveLength(1);
+    expect(Object.keys(sent[0])).toEqual(Object.keys(reportBody()));
+  });
+
+  it('registra `demo.anomaly.payload-bloat` com o `requestId` e os bytes conferíveis', () => {
+    const lab = payloadHarness();
+    const { sent } = lab.run(1);
+
+    expect(lab.events).toHaveLength(1);
+    const [event] = lab.events;
+
+    expect(event.eventType).toBe('demo.anomaly.payload-bloat');
+    expect(event.phase).toBe('functional');
+    // A resposta é 200: chamar isto de `error` seria o laboratório
+    // contradizendo o próprio status — e `error` vai para `stderr`, que a
+    // seleção de fatos do diagnóstico operacional trata como evidência.
+    expect(event.level).toBe(PAYLOAD_BLOAT_LEVEL);
+    expect(event.level).not.toBe('error');
+    expect(event.fields.requestId).toBe('req-1');
+    expect(event.fields.path).toBe('/api/report');
+    expect(event.fields.statusCode).toBe(200);
+    expect(event.fields.functionalArea).toBe('report');
+
+    // Os números da mensagem são os da resposta que saiu: quem contar os bytes
+    // encontra o mesmo valor.
+    expect(event.message).toContain(`lista \`${PAYLOAD_BLOAT_LIST_KEY}\``);
+    expect(event.message).toContain(`${bytesOf(reportBody())} → ${bytesOf(sent[0])} bytes`);
+
+    // Sem estar no contrato, o evento seria silenciosamente reescrito como
+    // `app.starting` na emissão real — e o log do laboratório mentiria.
+    expect(LOG_EVENT_TYPES).toContain('demo.anomaly.payload-bloat');
+  });
+
+  it('não infla duas vezes a mesma resposta', () => {
+    const lab = payloadHarness();
+    const { res, sent } = lab.run(1);
+
+    // `res.json` é restaurado antes de responder. Uma segunda chamada na mesma
+    // resposta encontra o método original.
+    res.json(reportBody());
+
+    expect(bytesOf(sent[1])).toBe(bytesOf(reportBody()));
+    expect(lab.events).toHaveLength(1);
+  });
+
+  it('deixa passar intacta a resposta que não tem a lista', () => {
+    const lab = payloadHarness();
+    const errorBody = { error: { code: 'X', message: 'y' }, requestId: 'abc' };
+    const { sent } = lab.run(1, errorBody);
+
+    expect(sent[0]).toBe(errorBody);
+    expect(lab.events).toEqual([]);
+  });
+
+  it('envia o corpo inflado mesmo se o coletor de log falhar', () => {
+    const lab = payloadHarness({
+      log: {
+        emit: () => {
+          throw new Error('coletor de log indisponível');
+        },
+      },
+    });
+
+    const { sent, synchronous } = lab.run(1);
+
+    // Ver decisão 5: o log é efeito colateral do cenário, nunca a condição dele.
+    expect(synchronous).toBe(true);
+    expect(bytesOf(sent[0])).toBeGreaterThanOrEqual(
+      bytesOf(reportBody()) * PAYLOAD_BLOAT_MIN_FACTOR,
+    );
+  });
+
+  it('conta as requisições por instância', () => {
+    const first = payloadHarness();
+    const second = payloadHarness();
+
+    for (let sequence = 1; sequence <= 4; sequence += 1) first.run(sequence);
+    second.run(1);
+
+    // Um roteador novo não herda o contador do anterior: é o que permite a este
+    // teste numerar de 1 sem depender da ordem dos outros.
+    expect(first.events).toHaveLength(4);
+    expect(second.events).toHaveLength(1);
+    expect(second.events[0].message).toContain('na requisição 1');
+  });
+});
+
+describe('createPayloadBloatAnomaly: sem a variável não existe payload inflado', () => {
+  it('não conta, não registra e não envolve `res.json` com o ambiente limpo', () => {
+    const lab = payloadHarness({ env: {} });
+
+    const results = [];
+    for (let sequence = 1; sequence <= 6; sequence += 1) {
+      results.push(lab.run(sequence));
+    }
+
+    // `wrapped: false` é a asserção que importa: sem a variável, o `res.json`
+    // que a rota chama é o do Express, sem nenhuma camada em volta.
+    expect(results.every((result) => result.wrapped === false)).toBe(true);
+    expect(results.every((result) => bytesOf(result.sent[0]) === bytesOf(reportBody()))).toBe(true);
+    expect(lab.events).toEqual([]);
+  });
+
+  it('ignora um modo que não é o de payload', () => {
+    for (const mode of [LATENCY_MODE, ERROR_RATE_MODE, NOISY_LOGS_MODE, 'payload']) {
+      const lab = payloadHarness({ env: { [DEMO_ANOMALY_ENV_VAR]: mode } });
+      const { wrapped } = lab.run(1);
+      expect(wrapped).toBe(false);
+      expect(lab.events).toEqual([]);
+    }
+  });
+
+  it('reconhece o modo apenas pelo valor exato, sem diferenciar caixa ou espaço', () => {
+    expect(payloadBloatModeEnabled({ [DEMO_ANOMALY_ENV_VAR]: 'payload-bloat' })).toBe(true);
+    expect(payloadBloatModeEnabled({ [DEMO_ANOMALY_ENV_VAR]: ' Payload-Bloat ' })).toBe(true);
+    expect(payloadBloatModeEnabled({ [DEMO_ANOMALY_ENV_VAR]: 'payload' })).toBe(false);
+    expect(payloadBloatModeEnabled({ [DEMO_ANOMALY_ENV_VAR]: 'payload_bloat' })).toBe(false);
+    expect(payloadBloatModeEnabled({ [DEMO_ANOMALY_ENV_VAR]: 'payload-bloat-extra' })).toBe(false);
+    expect(payloadBloatModeEnabled({})).toBe(false);
+  });
+});
+
+/* ------------------------------------------------------------------------- */
 /* Composição: um modo por vez                                                */
 /* ------------------------------------------------------------------------- */
 
@@ -561,6 +917,7 @@ describe('createNoisyLogsAnomaly: sem a variável não existe log extra', () => 
 function composedHarness(mode) {
   const sleeps = [];
   const events = [];
+  const sent = [];
 
   const middleware = createDemoAnomaly({
     env: mode === null ? {} : { [DEMO_ANOMALY_ENV_VAR]: mode },
@@ -571,16 +928,26 @@ function composedHarness(mode) {
     },
   });
 
-  const run = (sequence) =>
-    new Promise((resolve) => {
-      middleware(
-        { id: `req-${sequence}`, originalUrl: '/api/report' },
-        {},
-        (error) => resolve({ error: error ?? null }),
+  const run = (sequence) => {
+    // A resposta é falsa, mas precisa ter `json`: é o método que o cenário de
+    // payload envolve, e um `{}` cru não distinguiria "não envolveu" de
+    // "quebrou ao tentar".
+    const res = {
+      json: (payload) => {
+        sent.push(payload);
+        return res;
+      },
+    };
+    const originalJson = res.json;
+
+    return new Promise((resolve) => {
+      middleware({ id: `req-${sequence}`, originalUrl: '/api/report' }, res, (error) =>
+        resolve({ error: error ?? null, res, wrapped: res.json !== originalJson }),
       );
     });
+  };
 
-  return { run, sleeps, events };
+  return { run, sleeps, events, sent };
 }
 
 describe('createDemoAnomaly: um cenário de cada vez', () => {
@@ -629,15 +996,38 @@ describe('createDemoAnomaly: um cenário de cada vez', () => {
     expect(lab.events.every((event) => event.eventType === 'demo.anomaly.noisy-log')).toBe(true);
   });
 
-  it('sem a variável, atravessa os três cenários sem mover nada', async () => {
+  it('no modo `payload-bloat`, infla sem esperar e sem reprovar', async () => {
+    const lab = composedHarness(PAYLOAD_BLOAT_MODE);
+
+    const results = [];
+    for (let sequence = 1; sequence <= 6; sequence += 1) {
+      results.push(await lab.run(sequence));
+      results.at(-1).res.json(reportBody());
+    }
+
+    expect(results.every((result) => result.error === null)).toBe(true);
+    expect(lab.sleeps).toEqual([]);
+    expect(lab.events).toHaveLength(6);
+    expect(lab.events.every((event) => event.eventType === 'demo.anomaly.payload-bloat')).toBe(true);
+    expect(
+      lab.sent.every((body) => bytesOf(body) >= bytesOf(reportBody()) * PAYLOAD_BLOAT_MIN_FACTOR),
+    ).toBe(true);
+  });
+
+  it('sem a variável, atravessa os quatro cenários sem mover nada', async () => {
     const lab = composedHarness(null);
 
     const results = [];
     for (let sequence = 1; sequence <= 10; sequence += 1) {
       results.push(await lab.run(sequence));
+      results.at(-1).res.json(reportBody());
     }
 
     expect(results.every((result) => result.error === null)).toBe(true);
+    // Nem contador, nem log, nem `res.json`: a resposta sai do encadeamento com
+    // o método que entrou.
+    expect(results.every((result) => result.wrapped === false)).toBe(true);
+    expect(lab.sent.every((body) => bytesOf(body) === bytesOf(reportBody()))).toBe(true);
     expect(lab.sleeps).toEqual([]);
     expect(lab.events).toEqual([]);
   });
@@ -913,5 +1303,176 @@ describe('GET /api/report com o cenário de excesso de logs', () => {
     expect(events.filter((event) => event.eventType === 'demo.anomaly.noisy-log')).toEqual([]);
     // Duas linhas por requisição: a baseline da aplicação, intacta.
     expect(counts.every((entry) => entry.total === 2)).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------------- */
+/* Integração: o cenário de payload inflado na aplicação inteira              */
+/* ------------------------------------------------------------------------- */
+
+describe('GET /api/report com o cenário de payload inflado', () => {
+  const original = process.env[DEMO_ANOMALY_ENV_VAR];
+
+  afterEach(() => {
+    if (original === undefined) delete process.env[DEMO_ANOMALY_ENV_VAR];
+    else process.env[DEMO_ANOMALY_ENV_VAR] = original;
+  });
+
+  /**
+   * O relatório como a aplicação o devolve sem o laboratório: é este corpo que
+   * a baseline do Dia 2 mede, e é dele que o fator de 3× é contado.
+   *
+   * `res.text` (e não `res.body`) porque bytes recebidos são o que a observação
+   * do Dia 2 conta — `Buffer.byteLength` sobre o corpo lido, nunca
+   * `Content-Length`.
+   */
+  async function normalResponse() {
+    delete process.env[DEMO_ANOMALY_ENV_VAR];
+    const res = await request(createApp({ serveFrontend: false })).get('/api/report');
+    expect(res.status).toBe(200);
+    return { bytes: Buffer.byteLength(res.text, 'utf8'), body: res.body, text: res.text };
+  }
+
+  it('devolve 200 com o corpo pelo menos três vezes maior em todas as trinta requisições', async () => {
+    const normal = await normalResponse();
+
+    process.env[DEMO_ANOMALY_ENV_VAR] = PAYLOAD_BLOAT_MODE;
+    const app = createApp({ serveFrontend: false });
+
+    const sizes = [];
+    for (let sequence = 1; sequence <= 30; sequence += 1) {
+      const res = await request(app).get('/api/report');
+      // O cenário move `responseSizeP95Bytes`, e só ele: nada de 500 aqui.
+      expect(res.status).toBe(200);
+      sizes.push(Buffer.byteLength(res.text, 'utf8'));
+    }
+
+    // Toda requisição, e todas iguais: com 30 amostras o P95 cai no índice 28
+    // da lista ordenada, e aqui qualquer índice serve.
+    expect(new Set(sizes).size).toBe(1);
+
+    // As duas condições da regra `payload_size` sobre o corpo de verdade.
+    expect(sizes[0]).toBeGreaterThanOrEqual(normal.bytes * PAYLOAD_BLOAT_MIN_FACTOR);
+    expect(sizes[0] - normal.bytes).toBeGreaterThanOrEqual(PAYLOAD_BLOAT_MIN_EXTRA_BYTES);
+  }, 20_000);
+
+  it('mantém o formato geral do relatório e repete uma lista só', async () => {
+    const normal = await normalResponse();
+
+    process.env[DEMO_ANOMALY_ENV_VAR] = PAYLOAD_BLOAT_MODE;
+    const res = await request(createApp({ serveFrontend: false })).get('/api/report');
+
+    expect(Object.keys(res.body)).toEqual(Object.keys(normal.body));
+    for (const field of [
+      'totalRegistered',
+      'obtained',
+      'missing',
+      'duplicateCopies',
+      'completionPercentage',
+    ]) {
+      expect(res.body[field]).toEqual(normal.body[field]);
+    }
+
+    expect(res.body.byCountry).toEqual(normal.body.byCountry);
+    expect(res.body.missingStickers).toEqual(normal.body.missingStickers);
+
+    // A lista inteira, repetida um número inteiro de vezes — nem item cortado
+    // pela metade, nem item inventado.
+    const list = res.body[PAYLOAD_BLOAT_LIST_KEY];
+    const source = normal.body[PAYLOAD_BLOAT_LIST_KEY];
+    expect(list.length % source.length).toBe(0);
+    expect(list.length / source.length).toBeGreaterThan(1);
+    for (let offset = 0; offset < list.length; offset += source.length) {
+      expect(list.slice(offset, offset + source.length)).toEqual(source);
+    }
+  });
+
+  it('não altera o store nem deixa resíduo depois de trinta requisições', async () => {
+    const normal = await normalResponse();
+    const before = await request(createApp({ serveFrontend: false })).get('/api/stickers');
+
+    process.env[DEMO_ANOMALY_ENV_VAR] = PAYLOAD_BLOAT_MODE;
+    const app = createApp({ serveFrontend: false });
+    for (let sequence = 1; sequence <= 30; sequence += 1) {
+      await request(app).get('/api/report');
+    }
+
+    // O dado em memória termina como começou: a inflação existe durante uma
+    // resposta e morre com ela.
+    const after = await request(app).get('/api/stickers');
+    expect(after.body).toEqual(before.body);
+
+    // E o relatório volta ao tamanho normal assim que a variável sai — byte a
+    // byte, no mesmo processo.
+    const back = await normalResponse();
+    expect(back.text).toBe(normal.text);
+  }, 20_000);
+
+  it('não infla /api/health', async () => {
+    const clean = await request(createApp({ serveFrontend: false })).get('/api/health');
+
+    process.env[DEMO_ANOMALY_ENV_VAR] = PAYLOAD_BLOAT_MODE;
+    const app = createApp({ serveFrontend: false });
+
+    // O health check é o que a observação usa para saber que a aplicação subiu.
+    // Um corpo inflado aqui mudaria o que o `waitForHealth` lê na subida.
+    for (let sequence = 1; sequence <= 3; sequence += 1) {
+      const res = await request(app).get('/api/health');
+      expect(res.status).toBe(200);
+      expect(Buffer.byteLength(res.text, 'utf8')).toBe(Buffer.byteLength(clean.text, 'utf8'));
+    }
+  });
+
+  it('registra uma linha a mais por requisição — longe do piso do sinal de log', async () => {
+    process.env[DEMO_ANOMALY_ENV_VAR] = PAYLOAD_BLOAT_MODE;
+    const app = createApp({ serveFrontend: false });
+    const ids = Array.from({ length: 6 }, (_, index) => `bloat-test-${index + 1}-${randomUUID()}`);
+
+    const events = await captureStructuredLog(async () => {
+      for (const id of ids) {
+        const res = await request(app).get('/api/report').set('x-request-id', id);
+        expect(res.status).toBe(200);
+      }
+    });
+
+    const perRequest = ids.map((id) => {
+      const lines = events.filter((event) => event.requestId === id);
+      return {
+        total: lines.length,
+        bloat: lines.filter((event) => event.eventType === 'demo.anomaly.payload-bloat').length,
+      };
+    });
+
+    // Uma linha do cenário por requisição, sempre. As duas de sempre continuam
+    // lá: 2 + 1 = 3.
+    expect(perRequest.every((entry) => entry.bloat === 1)).toBe(true);
+    expect(perRequest.every((entry) => entry.total === 3)).toBe(true);
+
+    // E 3 não é anomalia de log: a regra `log_volume` exige `≥ 2 × 3` **e**
+    // `Δ ≥ 5` sobre a baseline de 2 linhas, o que põe o piso em 7. O efeito
+    // colateral está medido, e não vira um segundo sinal.
+    expect(3).toBeLessThan(2 * 3);
+    expect(3 - 2).toBeLessThan(5);
+
+    const bloat = events.filter((event) => event.eventType === 'demo.anomaly.payload-bloat');
+    expect(bloat).toHaveLength(ids.length);
+    expect(bloat.every((event) => event.level === PAYLOAD_BLOAT_LEVEL)).toBe(true);
+    expect(bloat.every((event) => event.phase === 'functional')).toBe(true);
+    expect(bloat.every((event) => event.statusCode === 200)).toBe(true);
+  }, 20_000);
+
+  it('não muda nada quando a variável não está definida', async () => {
+    const normal = await normalResponse();
+    const app = createApp({ serveFrontend: false });
+
+    const events = await captureStructuredLog(async () => {
+      for (let sequence = 1; sequence <= 3; sequence += 1) {
+        const res = await request(app).get('/api/report');
+        expect(res.status).toBe(200);
+        expect(Buffer.byteLength(res.text, 'utf8')).toBe(normal.bytes);
+      }
+    });
+
+    expect(events.filter((event) => event.eventType === 'demo.anomaly.payload-bloat')).toEqual([]);
   });
 });

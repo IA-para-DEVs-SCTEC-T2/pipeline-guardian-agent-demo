@@ -87,6 +87,20 @@ export const SCENARIOS = {
     expectedSignal: 'logLinesPerRequest',
     expectedAnomalyType: 'log_volume',
   },
+  // O único cenário que age em **toda** requisição, e não a cada N: o sintoma
+  // imitado é uma regressão de formato (a serialização passou a repetir uma
+  // lista), não um evento esporádico. Ver `createPayloadBloatAnomaly`.
+  'payload-bloat': {
+    mode: 'payload-bloat',
+    envValue: 'payload-bloat',
+    label: 'payload inflado',
+    summary:
+      'em toda requisição, a lista `duplicateStickers` repetida até o corpo ficar ao menos 3× ' +
+      'maior — no mesmo 200, no mesmo tempo e com o mesmo formato de relatório ' +
+      '(~1,9 KB → ~6,6 KB)',
+    expectedSignal: 'responseSizeP95Bytes',
+    expectedAnomalyType: 'payload_size',
+  },
 };
 
 export const SCENARIO_MODES = Object.keys(SCENARIOS);

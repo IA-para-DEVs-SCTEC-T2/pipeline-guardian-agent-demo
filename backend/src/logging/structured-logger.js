@@ -59,6 +59,7 @@ export const LOG_EVENT_TYPES = [
   'demo.anomaly.latency',
   'demo.anomaly.error-rate',
   'demo.anomaly.noisy-log',
+  'demo.anomaly.payload-bloat',
 ];
 
 /**

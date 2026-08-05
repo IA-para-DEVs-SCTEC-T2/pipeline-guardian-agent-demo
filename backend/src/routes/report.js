@@ -23,9 +23,11 @@ import { listStickers } from '../store/store.js';
  * O laboratório do Dia 2 entra aqui, e só aqui: `demoAnomaly` é o middleware de
  * `demo-anomalies.js`, inerte enquanto `DEMO_ANOMALY_MODE` não pedir um cenário.
  * Ele fica **antes** do handler porque nenhum cenário mexe no relatório: o
- * `latency` atrasa a resposta e o `error-rate` a substitui por um 500 do
- * `errorHandler`. Na requisição que passa — e são a maioria em qualquer cenário
- * — o corpo devolvido é o mesmo com ou sem o laboratório ligado.
+ * `latency` atrasa a resposta, o `error-rate` a substitui por um 500 do
+ * `errorHandler` e o `payload-bloat` envolve `res.json` para repetir uma lista
+ * **na saída**, depois de o relatório já estar montado. `buildReport`, o store e
+ * este handler não sabem que qualquer um deles existe — e sem a variável, o
+ * `res.json` que a rota chama é o do Express, sem nenhuma camada em volta.
  *
  * A requisição reprovada pelo `error-rate` não emite `functional.report.failed`:
  * o handler nem chega a rodar, e registrar "falha ao gerar o relatório" quando o
