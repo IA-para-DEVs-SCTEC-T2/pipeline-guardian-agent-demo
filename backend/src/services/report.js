@@ -13,6 +13,7 @@ export function duplicateCopies(quantity) {
  * @returns {object}
  */
 export function buildReport(stickers) {
+  const totalDuplicate = stickers.length;
   const totalRegistered = stickers.length;
   const obtained = stickers.filter((s) => s.quantity >= 1).length;
   const missing = totalRegistered - obtained;
