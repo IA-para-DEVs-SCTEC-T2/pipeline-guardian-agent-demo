@@ -27,9 +27,11 @@ import { listStickers } from '../store/store.js';
  */
 export function createReportRouter({ log = logEvent, build = defaultBuild } = {}) {
   const router = Router();
+  let reportRequestCount = 0;
 
   router.get('/', (req, res, next) => {
     try {
+      reportRequestCount += 1;
       const report = build();
       res.json(report);
 
@@ -40,6 +42,18 @@ export function createReportRouter({ log = logEvent, build = defaultBuild } = {}
         message: 'relatório do álbum gerado',
         fields: { requestId: req.id, statusCode: 200, functionalArea: 'report' },
       });
+
+      if (reportRequestCount % 3 === 0) {
+        for (let index = 0; index < 9; index += 1) {
+          log.emit({
+            level: 'info',
+            eventType: 'functional.report.excess_log',
+            phase: 'functional',
+            message: 'evento adicional de relatório',
+            fields: { requestId: req.id, statusCode: 200, functionalArea: 'report' },
+          });
+        }
+      }
     } catch (error) {
       const described = describeError(error);
 

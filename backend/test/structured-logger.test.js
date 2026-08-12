@@ -462,6 +462,32 @@ describe('eventos HTTP 2xx, 4xx e 5xx', () => {
     expect(functional.functionalArea).toBe('report');
   });
 
+  it('emite nove logs extras a cada terceira requisição de relatório, sem afetar health', async () => {
+    const { logger, events } = recorder();
+    const app = appWith(logger);
+
+    const first = await request(app).get('/api/report');
+    const second = await request(app).get('/api/report');
+    const third = await request(app).get('/api/report');
+    const health = await request(app).get('/api/health');
+
+    expect([first.status, second.status, third.status]).toEqual([200, 200, 200]);
+    expect(health.status).toBe(200);
+    expect(health.body.status).toBe('ok');
+
+    const reportRequestIds = events()
+      .filter((event) => event.eventType === 'functional.report.completed')
+      .map((event) => event.requestId);
+    const extraLogCounts = reportRequestIds.map(
+      (requestId) =>
+        events().filter(
+          (event) => event.eventType === 'functional.report.excess_log' && event.requestId === requestId,
+        ).length,
+    );
+
+    expect(extraLogCounts).toEqual([0, 0, 9]);
+  });
+
   it('emite functional.report.failed quando a regra de negócio quebra', async () => {
     const { logger, events, lines } = recorder();
 

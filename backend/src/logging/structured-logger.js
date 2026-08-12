@@ -51,6 +51,7 @@ export const LOG_EVENT_TYPES = [
   'http.request.completed',
   'health.check.completed',
   'functional.report.completed',
+  'functional.report.excess_log',
   'functional.report.failed',
 ];
 
