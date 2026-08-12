@@ -52,6 +52,7 @@ export const LOG_EVENT_TYPES = [
   'health.check.completed',
   'functional.report.completed',
   'functional.report.failed',
+  'anomaly.latency.injected',
 ];
 
 /**
@@ -72,6 +73,7 @@ export const OPTIONAL_FIELDS = [
   'signal',
   'functionalArea',
   'healthStatus',
+  'injectLatencyMs',
 ];
 
 /** Comprimento máximo de um campo de texto livre no log. */
