@@ -462,7 +462,7 @@ describe('eventos HTTP 2xx, 4xx e 5xx', () => {
     expect(functional.functionalArea).toBe('report');
   });
 
-  it('emite nove logs extras a cada terceira requisição de relatório, sem afetar health', async () => {
+  it('emite dez logs extras a cada segunda requisição de relatório, sem afetar health', async () => {
     const { logger, events } = recorder();
     const app = appWith(logger);
 
@@ -485,7 +485,7 @@ describe('eventos HTTP 2xx, 4xx e 5xx', () => {
         ).length,
     );
 
-    expect(extraLogCounts).toEqual([0, 0, 9]);
+    expect(extraLogCounts).toEqual([0, 10, 0]);
   });
 
   it('emite functional.report.failed quando a regra de negócio quebra', async () => {

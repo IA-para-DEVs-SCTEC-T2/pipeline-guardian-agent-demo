@@ -43,8 +43,8 @@ export function createReportRouter({ log = logEvent, build = defaultBuild } = {}
         fields: { requestId: req.id, statusCode: 200, functionalArea: 'report' },
       });
 
-      if (reportRequestCount % 3 === 0) {
-        for (let index = 0; index < 9; index += 1) {
+      if (reportRequestCount % 2 === 0) {
+        for (let index = 0; index < 10; index += 1) {
           log.emit({
             level: 'info',
             eventType: 'functional.report.excess_log',
