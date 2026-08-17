@@ -8,7 +8,7 @@ export default function Filters({ filters, countries, onChange }) {
         <input
           id="filter-search"
           type="search"
-          placeholder="Buscar por nome"
+          placeholder="Nome do jogador"
           value={filters.search}
           onChange={set('search')}
         />
